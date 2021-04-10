@@ -66,6 +66,7 @@ def load_data(path, simId):
         if (str(f).startswith(simId) and not str(f).find('cl') == -1 and str(f).endswith("output.txt")):
             cdata = pd.read_csv(path + "/" + str(f), sep = ";")
             client_dict = {}
+            #get throughput
             tp = cdata.copy()
             tp = tp[["Time_Now","Bytes_Received"]].dropna()
             tp["Time_Now"] = pd.to_timedelta(tp["Time_Now"], unit = 'seconds')
@@ -73,6 +74,21 @@ def load_data(path, simId):
             tp.index = tp.index.seconds
             tp["Bytes_Received"] = tp["Bytes_Received"] * 8 * 0.001
             client_dict['tp'] = tp
+            #get buffer level
+            bl = cdata.copy()
+            bl = bl[["Time_Now","Buffer_Level"]].dropna()
+            bl["Time_Now"] = pd.to_timedelta(bl["Time_Now"], unit = 'nanoseconds')
+            client_dict['bl'] = bl
+            #get bufferunderrun log
+            bul = cdata.copy()
+            bul = bul[["Time_Now","Buffer_Underrun"]].dropna()
+            bul["Time_Now"] = pd.to_timedelta(bul["Time_Now"], unit = 'nanoseconds')
+            client_dict['bul'] = bul
+            #get segment sizes
+            segSize = cdata.copy()
+            segSize = segSize[["Download_Request_Sent","Segment_Size"]].dropna()
+            segSize["Download_Request_Sent"] = pd.to_timedelta(segSize["Download_Request_Sent"], unit = 'nanoseconds')
+            client_dict['segSize'] = segSize
             client_data[str(f)] = client_dict
         if str(f).startswith(simId) and str(f).endswith("router_output.txt"):
             #get data for bottleneck router
@@ -328,7 +344,10 @@ results_content = html.Div([
             selectOutputs
         ]),
         dbc.Row(id="tpAvgGraph"),
-        dbc.Row(id="tpGraph")
+        dbc.Row(id="tpGraph"),
+        dbc.Row(id="blGraph"),
+        dbc.Row(id="bulGraph"),
+        dbc.Row(id="segSizeGraph")
     ])
 
 newSim_content = html.Div([
@@ -461,17 +480,23 @@ def loadSimData(n, simId, nrClients, simName):
 #update throughput graph
 @app.callback([
     Output('tpGraph', 'children'),
-    Output('tpAvgGraph', 'children')],
+    Output('tpAvgGraph', 'children'),
+    Output('blGraph', 'children'),
+    Output('bulGraph', 'children'),
+    Output('segSizeGraph', 'children')],
     Input('selectOutputs','value')
 )
 def update_tpGraph(clients):
     tpFig = go.Figure()
     tpAvgFig = go.Figure()
+    blFig = go.Figure()
+    bulFig = go.Figure()
+    segSizeFig = go.Figure()
     dfs = []
     
     if client_data:
-        df = router_data['tp']
-        tpFig.add_scatter(x=df.index, y=df["Throughput"], mode='lines', line=dict(color='firebrick', width=3), name="Bottleneck Link")
+        #df = router_data['tp']
+        #tpFig.add_scatter(x=df.index, y=df["Throughput"], mode='lines', line=dict(color='firebrick', width=3), name="Bottleneck Link")
         for client in clients:
             df = client_data[str(client)]['tp']
             tpFig.add_scatter(x=df.index, y=df["Bytes_Received"], mode='lines', name=str(client))
@@ -505,9 +530,45 @@ def update_tpGraph(clients):
         height=700)
         tpAvgGraph = dbc.Col(dcc.Graph(id="graph", figure=tpAvgFig))
 
-        return tpGraph, tpAvgGraph
+        for client in clients:
+            df = client_data[str(client)]['bl']
+            blFig.add_scatter(x=df["Time_Now"], y=df["Buffer_Level"], mode='lines', line_shape='hv', name=str(client))
+        blFig.update_layout(xaxis_title="seconds",
+        yaxis_title="BufferLevel(seconds)",
+        title="Buffer Level",
+        template="plotly_dark",
+        plot_bgcolor='#272B30',
+        paper_bgcolor='#272B30',
+        height=700)
+        blGraph = dbc.Col(dcc.Graph(id="graph", figure= blFig))
+
+        for client in clients:
+            df = client_data[str(client)]['bul']
+            bulFig.add_scatter(x=df["Time_Now"], y=df["Buffer_Underrun"], mode='lines', line_shape='hv', name=str(client))
+        bulFig.update_layout(xaxis_title="seconds",
+        yaxis_title="Buffer Underrun",
+        title="Buffer Underrun",
+        template="plotly_dark",
+        plot_bgcolor='#272B30',
+        paper_bgcolor='#272B30',
+        height=700)
+        bulGraph = dbc.Col(dcc.Graph(id="graph", figure= bulFig))
+
+        for client in clients:
+            df = client_data[str(client)]['segSize']
+            segSizeFig.add_scatter(x=df["Download_Request_Sent"], y=df["Segment_Size"], mode='lines', line_shape='hv', name=str(client))
+        segSizeFig.update_layout(xaxis_title="seconds",
+        yaxis_title="Size(Bit)",
+        title="Segment Sizes",
+        template="plotly_dark",
+        plot_bgcolor='#272B30',
+        paper_bgcolor='#272B30',
+        height=700)
+        segSizeGraph = dbc.Col(dcc.Graph(id="graph", figure= segSizeFig))
+
+        return tpGraph, tpAvgGraph, blGraph, bulGraph, segSizeGraph
     else:
-        return [], []
+        return [], [], [], [], []
 
 #starts a new simulation
 @app.callback(
@@ -557,7 +618,7 @@ def start_newSim(n, name, simId, panda, tobasco, festive, servers, video, tcp, r
             --bottleNeckRate=" + str(rateBottle) + "Mbps \
             --bottleNeckDelay=" + str(delayBottle) + "ms \
             --channelRate=" + str(rateClients) + "Mbps \
-            --channelDelay=" + str(delayClients) + "ms\"")
+            --channelDelay=" + str(delayClients) + "ms\" -v")
     return 'secondary'
 
 if __name__ == '__main__':
