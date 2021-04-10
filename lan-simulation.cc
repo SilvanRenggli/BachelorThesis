@@ -28,6 +28,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <errno.h>
+#include <sstream>
 #include "ns3/flow-monitor-module.h"
 #include "ns3/tcp-stream-helper.h"
 #include "ns3/tcp-stream-interface.h"
@@ -55,6 +56,13 @@ uint32_t festiveClients;
 std::string simulationName;
 std::string segmentSizeFilePath;
 std::string tcpModel;
+std::string bottleNeckRate;
+std::string bottleNeckDelay;
+std::string channelRate;
+std::string channelDelay;
+
+std::ofstream dataLog;
+std::ofstream eventLog; 
 
 std::string
 GetAdaptionAlgo (uint16_t client_id){
@@ -65,6 +73,20 @@ GetAdaptionAlgo (uint16_t client_id){
   }else{
     return "festive";
   }
+}
+
+void
+LogPacket (Ptr<const Packet> p)
+{
+  dataLog << Simulator::Now ().GetMicroSeconds () / (double) 1000000 << ";" << p->GetSize () << ";\n";
+  dataLog.flush ();
+}
+
+void
+LogEvent (const char *event ,uint64_t value)
+{
+  eventLog << Simulator::Now ().GetMicroSeconds () / (double) 1000000 << ";" << event << ";" << value << ";\n";
+  eventLog.flush ();
 }
 
 int
@@ -88,6 +110,10 @@ main (int argc, char *argv[])
   cmd.AddValue ("festiveClients", "The nr of clients using festive", festiveClients);
   cmd.AddValue ("segmentSizeFile", "The relative path (from ns-3.x directory) to the file containing the segment sizes in bytes", segmentSizeFilePath);
   cmd.AddValue ("tcp", "The tcp implementation that the simulation uses", tcpModel);
+  cmd.AddValue ("bottleNeckRate", "The data rate of the bottleneck link", bottleNeckRate);
+  cmd.AddValue ("bottleNeckDelay", "The delay of the bottleneck link", bottleNeckDelay);
+  cmd.AddValue ("channelRate", "The data rate of all other links", channelRate);
+  cmd.AddValue ("channelDelay", "The delay of all other links", channelDelay);
   cmd.Parse (argc, argv);
 
 
@@ -101,7 +127,7 @@ main (int argc, char *argv[])
   Config::SetDefault("ns3::TcpSocket::RcvBufSize", UintegerValue (524288));
 
 
-   //Create nodes
+  //Create nodes
 
   ns3::NodeContainer routerNodes;
   routerNodes.Create(2);
@@ -112,12 +138,13 @@ main (int argc, char *argv[])
   
   //Create channels
   ns3::PointToPointHelper bottleNeckLink;
-  bottleNeckLink.SetDeviceAttribute("DataRate", StringValue ("100Mbps"));
-  bottleNeckLink.SetChannelAttribute ("Delay", StringValue ("2ms"));
+  bottleNeckLink.SetDeviceAttribute("DataRate", StringValue (bottleNeckRate)); 
+  bottleNeckLink.SetChannelAttribute ("Delay", StringValue (bottleNeckDelay));
   ns3::NetDeviceContainer routerdevices = bottleNeckLink.Install(routerNodes);
 
-  ns3::PointToPointHelper pointToPointLeaf; pointToPointLeaf.SetDeviceAttribute("DataRate", StringValue ("5Mbps"));
-  pointToPointLeaf.SetChannelAttribute("Delay", StringValue ("2ms"));
+  ns3::PointToPointHelper pointToPointLeaf; 
+  pointToPointLeaf.SetDeviceAttribute("DataRate", StringValue (channelRate)); 
+  pointToPointLeaf.SetChannelAttribute("Delay", StringValue (channelDelay));
 
   ns3::NetDeviceContainer leftrouterdevices;
   ns3::NetDeviceContainer clientdevices;
@@ -147,7 +174,8 @@ main (int argc, char *argv[])
   stack.Install(clientNodes);
   stack.Install(serverNodes);
 
-
+  // install packet sniffer for logging on router
+  routerdevices.Get (0)->TraceConnectWithoutContext ("Sniffer", MakeCallback(&LogPacket));
 
   //Assign ipv4Addresses
   ns3::Ipv4AddressHelper routerips =
@@ -200,7 +228,7 @@ main (int argc, char *argv[])
   Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
   uint16_t port = 9;
 
-  // create folder so we can log the positions of the clients
+  // create folder for logged data
   const char * mylogsDir = dashLogDirectory.c_str();
   mkdir (mylogsDir, 0775);
   std::string algodirstr (dashLogDirectory +  simulationName );  
@@ -209,6 +237,21 @@ main (int argc, char *argv[])
   std::string dirstr (dashLogDirectory + simulationName + "/" + ToString (numberOfClients) + "/");
   const char * dir = dirstr.c_str();
   mkdir(dir, 0775);
+
+  // create logfile for router throughput
+  
+  std::string Log = dashLogDirectory + simulationName + "/" + ToString(numberOfClients)  + "/sim" + ToString(simulationId) + "_" + "router_output.txt";
+  dataLog.open (Log.c_str ());
+  dataLog << "Time_Now;Throughput;\n";
+  dataLog.flush ();
+
+  // create logfile for event logging
+  
+  Log = dashLogDirectory + simulationName + "/" + ToString(numberOfClients)  + "/sim" + ToString(simulationId) + "_" + "event_log.txt";
+  eventLog.open (Log.c_str ());
+  eventLog << "Time_Now;Event;Value\n";
+  eventLog.flush ();
+  Simulator::Schedule(Seconds(0), &LogEvent, "BottleneckRate", stoi(bottleNeckRate));
 
 
   uint clientsPerServer = numberOfClients / numberOfServers;
@@ -251,6 +294,8 @@ main (int argc, char *argv[])
   NS_LOG_INFO ("Sim: " << simulationId << "Clients: " << numberOfClients);
   Simulator::Run ();
   Simulator::Destroy ();
+  dataLog.close();
+  eventLog.close();
   NS_LOG_INFO ("Done.");
   return 0;
 }

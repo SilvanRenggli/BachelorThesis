@@ -11,6 +11,8 @@ import pandas as pd
 import re
 from dash.dependencies import Input, Output, State
 
+import os
+from os import mkdir
 from os import system
 from os import listdir
 from os.path import isfile, join
@@ -589,21 +591,13 @@ def update_tpGraph(clients):
 )
 def start_newSim(n, name, simId, panda, tobasco, festive, servers, video, tcp, rateBottle, delayBottle, rateClients, delayClients):
     if n > 0:
-    #    system("./waf --run=\"lan-simulation \
-    #     --simulationName=BalancedSimulation\
-    #     --simulationId=2 \
-    #     --numberOfClients=30 \
-    #     --numberOfServers=10 \
-    #     --segmentDuration=2000000 \
-    #     --pandaClients=10 \
-    #     --tobascoClients=10 \
-    #     --festiveClients=10 \
-    #     --segmentSizeFile=contrib/dash/segmentSizes.txt \
-    #     --tcp=ns3::TcpNewReno \
-    #     --bottleNeckRate=100Mbps \
-    #     --bottleNeckDelay=2ms \
-    #     --channelRate=5Mbps \
-    #     --channelDelay=2ms\"")
+        if not os.path.exists(path + name):
+            mkdir(path + name)
+        if not os.path.exists(path + name + "/" + str(panda + tobasco + festive)):
+            mkdir(path + name + "/" + str(panda + tobasco + festive))
+        eventFile = open(path + name + "/" + str(panda + tobasco + festive) + "/sim" + str(simId) + "_event_schedule.txt", "w")
+        eventFile.write("Event Time Parameters\n")
+        eventFile.write("BottleNeckRate 0 " + str(rateBottle) + "\n")
         system("./waf --run=\"lan-simulation \
             --simulationName=" + name +" \
             --simulationId=" + str(simId) +" \
