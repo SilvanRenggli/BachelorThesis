@@ -27,6 +27,8 @@ path = "./dash-log-files/" #/ns3/ns-3.29
 
 client_data = {}
 router_data = {}
+live_client_data = {}
+app_state = { "loading" : False, "simFinished" : True}
 
 congestionProtocols = [{"label": 'TcpNewReno', "value": 'ns3::TcpNewReno'}, {"label": 'TcpCubic', "value": 'ns3::TcpCubic'}, {"label": 'TcpWestwood', "value": 'ns3::TcpWestwood'}, {"label": 'TcpVegas', "value": 'ns3::TcpVegas'}, {"label": 'TcpVeno', "value": 'ns3::TcpVeno'}, {"label": 'TcpBic', "value": 'ns3::TcpBic'}] 
 
@@ -38,7 +40,7 @@ def get_sim_id(file):
     else:
         return -1
 
-#returns all client outpur files that belong to this simulation
+#returns all client output files that belong to this simulation
 def get_outputs(path, simId):
     outputs = []
     for f in list( listdir( path )):
@@ -58,7 +60,10 @@ app.layout = html.Div([
         active_tab="results"
     ),
 
-    html.Div(id='tab-content')
+    html.Div(id='tab-content'),
+
+    #hidden intermediate values
+    html.Div(id='live_data', style={'display': 'none'})
 ])
 
 #load all dataframes from this simulation and store them in a dictionary
@@ -103,11 +108,48 @@ def load_data(path, simId):
             tp["Throughput"] = tp["Throughput"] * 8 * 0.001
             router_data['tp'] = tp
 
+#load all dataframes from this simulation and store them in a dictionary
+def load_live_data(path, simId):
+    app_state["loading"] = True
+    #get data for all clients
+    for f in list( listdir( path )):
+        if (str(f).startswith(simId) and not str(f).find('cl') == -1 and str(f).endswith("output.txt")):
+            if not str(f) in client_data:
+                cdata = pd.read_csv(path + "/" + str(f), sep = ";")
+                client_dict = {}
+                client_dict["lastRead"] = len(cdata.index)
+                #get buffer level
+                bl = cdata.copy()
+                bl = bl[["Time_Now","Buffer_Level"]].dropna()
+                bl["Time_Now"] = pd.to_timedelta(bl["Time_Now"], unit = 'nanoseconds')
+                client_dict['bl'] = bl
+                live_client_data[str(f)] = client_dict
+            else:
+                cdata = pd.read_csv(path + "/" + str(f), sep = ";", skiprows=range(1, live_client_data[str(f)]["lastRead"]))
+                client_dict = {}
+                client_dict["lastRead"] = client_dict["lastRead"] + len(cdata.index)
+                #get buffer level
+                bl = cdata.copy()
+                bl = bl[["Time_Now","Buffer_Level"]].dropna()
+                bl["Time_Now"] = pd.to_timedelta(bl["Time_Now"], unit = 'nanoseconds')
+                new_bl = live_client_data[str(f)]['bl'].append(bl)
+                client_dict['bl'] = new_bl
+                live_client_data[str(f)] = client_dict
+    app_state["loading"] = False
+                
+
+
+
 #get the average of all dataframes
 def get_average(dfs):
     avg = reduce(lambda a, b: a.add(b, fill_value=0), dfs)
     avg = avg.div(len(dfs))
     return avg
+
+#get the sum of all dataframes
+def get_sum(dfs):
+    res = reduce(lambda a, b: a.add(b, fill_value=0), dfs)
+    return res
 
 def get_algo(client):
     result = re.search('cl\d+_(.*)_output.txt', client)
@@ -379,6 +421,16 @@ newSim_content = html.Div([
         ])
     ])
 
+liveRes_content = html.Div([
+        dbc.Row(id="liveHeader"),
+        dbc.Row(id="liveBlGraph"),
+        dcc.Interval(
+            id = 'live_update',
+            interval = 1*1000,
+            n_intervals = 0,
+        )
+    ])
+
 #show content of selected tab
 @app.callback(Output('tab-content', 'children'),
               Input('tabs', 'active_tab'))
@@ -392,9 +444,7 @@ def switch_tab(at):
     elif at == 'new':
         return newSim_content
     elif at == 'live':
-        return html.Div([
-            html.H3('Live content')
-        ])
+        return liveRes_content
 
 #set clients according to simulation
 @app.callback(
@@ -479,7 +529,7 @@ def loadSimData(n, simId, nrClients, simName):
     options.sort()
     return options
 
-#update throughput graph
+#update all graphs
 @app.callback([
     Output('tpGraph', 'children'),
     Output('tpAvgGraph', 'children'),
@@ -488,7 +538,7 @@ def loadSimData(n, simId, nrClients, simName):
     Output('segSizeGraph', 'children')],
     Input('selectOutputs','value')
 )
-def update_tpGraph(clients):
+def update_allGraphs(clients):
     tpFig = go.Figure()
     tpAvgFig = go.Figure()
     blFig = go.Figure()
@@ -572,9 +622,9 @@ def update_tpGraph(clients):
     else:
         return [], [], [], [], []
 
-#starts a new simulation
+#prepare a new simulation
 @app.callback(
-    Output('newSimButton', 'color'),
+    Output('live_data', 'children'),
     Input('newSimButton', 'n_clicks'),
     State('newName', 'value'),
     State('newId', 'value'),
@@ -589,15 +639,42 @@ def update_tpGraph(clients):
     State('rateClients', 'value'),
     State('delayClients', 'value'),
 )
-def start_newSim(n, name, simId, panda, tobasco, festive, servers, video, tcp, rateBottle, delayBottle, rateClients, delayClients):
-    if n > 0:
+def prepare_newSim(n, name, simId, panda, tobasco, festive, servers, video, tcp, rateBottle, delayBottle, rateClients, delayClients):
+    if n > 0 and name:
+        print("pressed")
         if not os.path.exists(path + name):
             mkdir(path + name)
         if not os.path.exists(path + name + "/" + str(panda + tobasco + festive)):
             mkdir(path + name + "/" + str(panda + tobasco + festive))
-        eventFile = open(path + name + "/" + str(panda + tobasco + festive) + "/sim" + str(simId) + "_event_schedule.txt", "w")
+        livePath = path + name + "/" + str(panda + tobasco + festive) + "/"
+        eventFile = open(livePath + "sim" + str(simId) + "_event_schedule.txt", "w")
         eventFile.write("Event Time Parameters\n")
         eventFile.write("BottleNeckRate 0 " + str(rateBottle) + "\n")
+        eventFile.close()
+        return  [livePath, simId]
+    return []
+
+#starts a new simulation
+@app.callback(
+    Output('newSimButton', 'color'), #Todo finish indicator
+    Input('live_data', 'children'),
+    State('newName', 'value'),
+    State('newId', 'value'),
+    State('pandaClients', 'value'),
+    State('tobascoClients', 'value'),
+    State('festiveClients', 'value'),
+    State('nrServers', 'value'),
+    State('videoFile', 'value'),
+    State('selectTcp', 'value'),
+    State('rateBottle', 'value'),
+    State('delayBottle', 'value'),
+    State('rateClients', 'value'),
+    State('delayClients', 'value'),
+)
+def start_newSim(p, name, simId, panda, tobasco, festive, servers, video, tcp, rateBottle, delayBottle, rateClients, delayClients):
+    if p and app_state["simFinished"]:
+        app_state["simFinished"] = False
+        print("starting simulation")
         system("./waf --run=\"lan-simulation \
             --simulationName=" + name +" \
             --simulationId=" + str(simId) +" \
@@ -612,8 +689,42 @@ def start_newSim(n, name, simId, panda, tobasco, festive, servers, video, tcp, r
             --bottleNeckRate=" + str(rateBottle) + "Mbps \
             --bottleNeckDelay=" + str(delayBottle) + "ms \
             --channelRate=" + str(rateClients) + "Mbps \
-            --channelDelay=" + str(delayClients) + "ms\" -v")
-    return 'secondary'
+            --channelDelay=" + str(delayClients) + "ms\"")
+        print("sim finished")
+        app_state["simFinished"] = True
+        return  'primary'
+    print("no sim started")
+    return 'primary'
+
+#updates live results
+@app.callback(Output('liveBlGraph', 'children'),
+              Output('live_update', 'disabled'),                            
+              Input('live_update', 'n_intervals'),
+              State('live_data', 'children'),
+              State('tabs', 'active_tab'))
+def updateLiveGraphs(n ,liveData, tab):
+    if tab == 'live' and liveData:
+        livePath = liveData[0]
+        liveId = "sim" + str(liveData[1])
+        if not app_state["loading"]:
+            load_live_data(livePath, liveId)
+        blFig = go.Figure()
+        clients = get_outputs(livePath, liveId)
+        for client in clients:
+            if str(client) in live_client_data and 'bl' in live_client_data[str(client)]:
+                df = live_client_data[str(client)]['bl']
+                blFig.add_scatter(x=df["Time_Now"], y=df["Buffer_Level"], mode='lines', line_shape='hv', name=str(client))
+        blFig.update_layout(xaxis_title="seconds",
+        yaxis_title="BufferLevel(seconds)",
+        title="Buffer Level",
+        template="plotly_dark",
+        plot_bgcolor='#272B30',
+        paper_bgcolor='#272B30',
+        height=700)
+        blGraph = dbc.Col(dcc.Graph(id="graph", figure= blFig))
+
+        return blGraph, False
+    return [], True
 
 if __name__ == '__main__':
     app.run_server(debug=True)
