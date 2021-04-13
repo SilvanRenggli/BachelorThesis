@@ -109,12 +109,12 @@ def load_data(path, simId):
             router_data['tp'] = tp
 
 #load all dataframes from this simulation and store them in a dictionary
-def load_live_data(path, simId):
+def load_live_data(path, simId, unit):
     app_state["loading"] = True
     #get data for all clients
     for f in list( listdir( path )):
         if (str(f).startswith(simId) and not str(f).find('cl') == -1 and str(f).endswith("output.txt")):
-            if not str(f) in client_data:
+            if not str(f) in live_client_data:
                 cdata = pd.read_csv(path + "/" + str(f), sep = ";")
                 client_dict = {}
                 client_dict["lastRead"] = len(cdata.index)
@@ -123,18 +123,40 @@ def load_live_data(path, simId):
                 bl = bl[["Time_Now","Buffer_Level"]].dropna()
                 bl["Time_Now"] = pd.to_timedelta(bl["Time_Now"], unit = 'nanoseconds')
                 client_dict['bl'] = bl
+                #get throughput
+                tp = cdata.copy()
+                tp = tp[["Time_Now","Bytes_Received"]].dropna()
+                tp["Time_Now"] = pd.to_timedelta(tp["Time_Now"], unit = 'seconds')
+                tp = tp.resample('1S', on= "Time_Now").sum() #TODO always start resampling at 2s
+                tp.index = tp.index.seconds
+                tp["Bytes_Received"] = tp["Bytes_Received"] * 8 * 0.001
+                client_dict['tp'] = tp
                 live_client_data[str(f)] = client_dict
             else:
                 cdata = pd.read_csv(path + "/" + str(f), sep = ";", skiprows=range(1, live_client_data[str(f)]["lastRead"]))
                 client_dict = {}
-                client_dict["lastRead"] = client_dict["lastRead"] + len(cdata.index)
+                client_dict["lastRead"] = live_client_data[str(f)]["lastRead"] + len(cdata.index)
                 #get buffer level
                 bl = cdata.copy()
                 bl = bl[["Time_Now","Buffer_Level"]].dropna()
                 bl["Time_Now"] = pd.to_timedelta(bl["Time_Now"], unit = 'nanoseconds')
                 new_bl = live_client_data[str(f)]['bl'].append(bl)
                 client_dict['bl'] = new_bl
+                
+                #get throughput
+                tp = cdata.copy()
+                tp = tp[["Time_Now","Bytes_Received"]].dropna()
+                tp["Time_Now"] = pd.to_timedelta(tp["Time_Now"], unit = 'seconds')
+                tp = tp.resample('1S', on= "Time_Now").sum() #TODO always start resampling at 2s
+                if not tp.empty:
+                    tp.index = tp.index.seconds
+                    tp["Bytes_Received"] = tp["Bytes_Received"] * 8 * 0.001
+                    new_tp = live_client_data[str(f)]['tp'].append(tp)
+                    client_dict['tp'] = new_tp
+                else:
+                    client_dict['tp'] = live_client_data[str(f)]['tp'].append(tp)
                 live_client_data[str(f)] = client_dict
+                
     app_state["loading"] = False
                 
 
@@ -422,8 +444,16 @@ newSim_content = html.Div([
     ])
 
 liveRes_content = html.Div([
-        dbc.Row(id="liveHeader"),
-        dbc.Row(id="liveBlGraph"),
+        dbc.Tabs(
+        [
+            dbc.Tab(label='Buffer Level', tab_id='bl'),
+            dbc.Tab(label='Throughput', tab_id='tp'),
+            dbc.Tab(label='Average Throughput', tab_id='avgTp'),
+        ],
+        id="liveTabs",
+        active_tab="bl"
+        ),
+        dbc.Row(id="liveGraph"),
         dcc.Interval(
             id = 'live_update',
             interval = 1*1000,
@@ -697,33 +727,75 @@ def start_newSim(p, name, simId, panda, tobasco, festive, servers, video, tcp, r
     return 'primary'
 
 #updates live results
-@app.callback(Output('liveBlGraph', 'children'),
+@app.callback(Output('liveGraph', 'children'),
               Output('live_update', 'disabled'),                            
               Input('live_update', 'n_intervals'),
               State('live_data', 'children'),
-              State('tabs', 'active_tab'))
-def updateLiveGraphs(n ,liveData, tab):
+              State('tabs', 'active_tab'),
+              State('liveTabs', 'active_tab'))
+def updateLiveGraphs(n ,liveData, tab, liveTab):
     if tab == 'live' and liveData:
         livePath = liveData[0]
         liveId = "sim" + str(liveData[1])
         if not app_state["loading"]:
-            load_live_data(livePath, liveId)
-        blFig = go.Figure()
+            load_live_data(livePath, liveId, liveTab)
+        Fig = go.Figure()
         clients = get_outputs(livePath, liveId)
-        for client in clients:
-            if str(client) in live_client_data and 'bl' in live_client_data[str(client)]:
-                df = live_client_data[str(client)]['bl']
-                blFig.add_scatter(x=df["Time_Now"], y=df["Buffer_Level"], mode='lines', line_shape='hv', name=str(client))
-        blFig.update_layout(xaxis_title="seconds",
-        yaxis_title="BufferLevel(seconds)",
-        title="Buffer Level",
-        template="plotly_dark",
-        plot_bgcolor='#272B30',
-        paper_bgcolor='#272B30',
-        height=700)
-        blGraph = dbc.Col(dcc.Graph(id="graph", figure= blFig))
-
-        return blGraph, False
+        if liveTab == 'bl':
+            for client in clients:
+                if str(client) in live_client_data and 'bl' in live_client_data[str(client)]:
+                    df = live_client_data[str(client)]['bl']
+                    Fig.add_scatter(x=df["Time_Now"], y=df["Buffer_Level"], mode='lines', line_shape='hv', name=str(client))
+            Fig.update_layout(xaxis_title="seconds",
+            yaxis_title="BufferLevel(seconds)",
+            title="Buffer Level",
+            template="plotly_dark",
+            plot_bgcolor='#272B30',
+            paper_bgcolor='#272B30',
+            height=700)
+            blGraph = dbc.Col(dcc.Graph(id="graph", figure= Fig))
+            return blGraph, False
+        if liveTab == 'tp':
+            for client in clients:
+                if str(client) in live_client_data and 'tp' in live_client_data[str(client)]:
+                    df = live_client_data[str(client)]['tp']
+                    Fig.add_scatter(x=df.index, y=df["Bytes_Received"], mode='lines', name=str(client))
+            Fig.update_layout(xaxis_title="seconds",
+            yaxis_title="Kb",
+            title="Throughput",
+            template="plotly_dark",
+            plot_bgcolor='#272B30',
+            paper_bgcolor='#272B30',
+            height=700)
+            tpGraph = dbc.Col(dcc.Graph(id="graph", figure= Fig))
+            return tpGraph, False
+        if liveTab == 'avgTp':
+            dfs = []
+            abrAlgos = {}
+            for client in clients:
+                if str(client) in live_client_data and 'tp' in live_client_data[str(client)]:
+                    algo = get_algo(client)
+                    if not algo in abrAlgos:
+                        abrAlgos[algo] = []
+                    abrAlgos[algo].append(live_client_data[str(client)]['tp'])
+                    dfs.append(live_client_data[str(client)]['tp'])
+            if dfs:
+                avgAll = get_average(dfs)
+                Fig.add_scatter(x=avgAll.index, y=avgAll["Bytes_Received"], mode='lines' , name="All Clients")
+            for key, value in abrAlgos.items():
+                if value:
+                    avg = get_average(value)
+                    Fig.add_scatter(x=avg.index, y=avg["Bytes_Received"], mode='lines' , name= key)
+            Fig.update_layout(xaxis_title="seconds",
+            yaxis_title="Kb",
+            title="Average Throughput",
+            template="plotly_dark",
+            plot_bgcolor='#272B30',
+            paper_bgcolor='#272B30',
+            height=700)
+            tpAvgGraph = dbc.Col(dcc.Graph(id="graph", figure=Fig))
+            return tpAvgGraph, False
+        return [], False
     return [], True
 
 if __name__ == '__main__':
