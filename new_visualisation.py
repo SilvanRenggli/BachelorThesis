@@ -707,7 +707,9 @@ def prepare_newSim(n, name, simId, panda, tobasco, festive, servers, video, tcp,
         livePath = path + name + "/" + str(panda + tobasco + festive) + "/"
         eventFile = open(livePath + "sim" + str(simId) + "_event_schedule.txt", "w")
         eventFile.write("Event Time Parameters\n")
-        eventFile.write("BottleNeckRate 0 " + str(rateBottle) + "\n")
+        #eventFile.write("BottleNeckRate 0 " + str(rateBottle) + "\n")
+        eventFile.write("BottleNeckRate 20 1Mbps\n")
+        eventFile.write("BottleNeckRate 100 100Mbps\n")
         eventFile.close()
         return  [livePath, simId]
     return []
@@ -747,7 +749,8 @@ def start_newSim(p, name, simId, panda, tobasco, festive, servers, video, tcp, r
             --bottleNeckRate=" + str(rateBottle) + "Mbps \
             --bottleNeckDelay=" + str(delayBottle) + "ms \
             --channelRate=" + str(rateClients) + "Mbps \
-            --channelDelay=" + str(delayClients) + "ms\"")
+            --channelDelay=" + str(delayClients) + "ms \
+            --liveInputs=" + str(0) + "\"")
         print("sim finished")
         app_state["simFinished"] = True
         return  'primary'

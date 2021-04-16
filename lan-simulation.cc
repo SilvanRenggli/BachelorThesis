@@ -53,6 +53,7 @@ uint32_t numberOfServers;
 uint32_t pandaClients;
 uint32_t tobascoClients;
 uint32_t festiveClients;
+uint32_t live_inputs;
 std::string simulationName;
 std::string segmentSizeFilePath;
 std::string tcpModel;
@@ -85,8 +86,47 @@ LogPacket (Ptr<const Packet> p)
 void
 LogEvent (const char *event ,uint64_t value)
 {
-  eventLog << Simulator::Now ().GetMicroSeconds () / (double) 1000000 << ";" << event << ";" << value << ";\n";
+  eventLog << Simulator::Now ().GetMicroSeconds () / (double) 1000000 << ";" << event << ";" << value << "\n";
   eventLog.flush ();
+}
+
+void
+changeBottleneckRate (const std::string& value)
+{
+  Config::Set("/NodeList/0/DeviceList/0/$ns3::PointToPointNetDevice/DataRate", StringValue(value) );
+  Config::Set("/NodeList/1/DeviceList/0/$ns3::PointToPointNetDevice/DataRate", StringValue(value) );
+  LogEvent ("BottleneckRate", std::stoi(value));
+}
+
+void
+ScheduleEvents (const char* eventFilePath)
+{
+  std::cerr << "called " << eventFilePath <<"\n";
+  std::ifstream efile(eventFilePath);
+  std::string line;
+  std::getline(efile, line);
+  while (std::getline(efile, line))
+  {
+    std::istringstream iss(line);
+    std::string event;
+    int time;
+    std::string value;
+    if (!(iss >> event >> time >> value)) {
+      std::cerr << "invalid event schedule file!" << "\n";
+    }
+    if (event == "BottleNeckRate"){
+      //Simulator::Schedule(Seconds(time), &changeBottleneckRate, (value + "Mbps").c_str());
+      Simulator::Schedule(Seconds(time), &changeBottleneckRate, value);
+    }
+    std::cerr << event << " " << std::to_string(time) << " " << value << "\n";
+  }
+}
+
+void
+CheckLiveEvents ()
+{
+  std::cerr << "checked events\n";
+  Simulator::Schedule (MilliSeconds (100), &CheckLiveEvents);
 }
 
 int
@@ -114,6 +154,7 @@ main (int argc, char *argv[])
   cmd.AddValue ("bottleNeckDelay", "The delay of the bottleneck link", bottleNeckDelay);
   cmd.AddValue ("channelRate", "The data rate of all other links", channelRate);
   cmd.AddValue ("channelDelay", "The delay of all other links", channelDelay);
+  cmd.AddValue ("liveInputs", "Wheter live inputs are enabled or not 1 or 0", live_inputs);
   cmd.Parse (argc, argv);
 
 
@@ -245,14 +286,15 @@ main (int argc, char *argv[])
   dataLog << "Time_Now;Throughput;\n";
   dataLog.flush ();
 
+  // load scheduled events
+  ScheduleEvents((dirstr + "sim" + ToString(simulationId) + "_event_schedule.txt").c_str());
+
   // create logfile for event logging
   
   Log = dashLogDirectory + simulationName + "/" + ToString(numberOfClients)  + "/sim" + ToString(simulationId) + "_" + "event_log.txt";
   eventLog.open (Log.c_str ());
   eventLog << "Time_Now;Event;Value\n";
   eventLog.flush ();
-  Simulator::Schedule(Seconds(0), &LogEvent, "BottleneckRate", stoi(bottleNeckRate));
-
 
   uint clientsPerServer = numberOfClients / numberOfServers;
   for (uint i = 0; i < serverNodes.GetN (); i++)
@@ -290,6 +332,10 @@ main (int argc, char *argv[])
       clientApp.Start (Seconds (2.0));
     }
 
+  if (live_inputs != 0){
+    Simulator::Schedule (Seconds (0), &CheckLiveEvents);
+  }
+  
   NS_LOG_INFO ("Run Simulation.");
   NS_LOG_INFO ("Sim: " << simulationId << "Clients: " << numberOfClients);
   Simulator::Run ();
