@@ -29,6 +29,12 @@ client_data = {}
 router_data = {}
 live_client_data = {}
 app_state = { "loading" : False, "simFinished" : True}
+extract_unit = { 
+                "bl" : {"index": "Time_Now", "value": "Buffer_Level", "resample": False, "timeUnit": 'nanoseconds'},
+                "tp" : {"index": "Time_Now", "value": "Bytes_Received", "resample": True, "timeUnit": 'seconds'},
+                "segSize" : {"index": "Download_Request_Sent", "value": "Segment_Size", "resample": False, "timeUnit": 'nanoseconds'},
+                "qualLevel" : {"index": "Time_Now", "value": "Rep_Level", "resample": False, "timeUnit": 'nanoseconds'},
+                }
 
 congestionProtocols = [{"label": 'TcpNewReno', "value": 'ns3::TcpNewReno'}, {"label": 'TcpCubic', "value": 'ns3::TcpCubic'}, {"label": 'TcpWestwood', "value": 'ns3::TcpWestwood'}, {"label": 'TcpVegas', "value": 'ns3::TcpVegas'}, {"label": 'TcpVeno', "value": 'ns3::TcpVeno'}, {"label": 'TcpBic', "value": 'ns3::TcpBic'}] 
 
@@ -96,6 +102,11 @@ def load_data(path, simId):
             segSize = segSize[["Download_Request_Sent","Segment_Size"]].dropna()
             segSize["Download_Request_Sent"] = pd.to_timedelta(segSize["Download_Request_Sent"], unit = 'nanoseconds')
             client_dict['segSize'] = segSize
+            #get quality levels
+            qualLevel = cdata.copy()
+            qualLevel = qualLevel[["Time_Now","Rep_Level"]].dropna()
+            qualLevel["Time_Now"] = pd.to_timedelta(qualLevel["Time_Now"], unit = 'nanoseconds')
+            client_dict['qualLevel'] = qualLevel
             client_data[str(f)] = client_dict
         if str(f).startswith(simId) and str(f).endswith("router_output.txt"):
             #get data for bottleneck router
@@ -108,59 +119,59 @@ def load_data(path, simId):
             tp["Throughput"] = tp["Throughput"] * 8 * 0.001
             router_data['tp'] = tp
 
-#load all dataframes from this simulation and store them in a dictionary
-def load_live_data(path, simId, unit):
+#update the dataframes from the currently running simulation    
+def new_load_live_data(path, simId, unit):
+    if unit == 'avgTp':
+        unit = 'tp'
     app_state["loading"] = True
     #get data for all clients
     for f in list( listdir( path )):
         if (str(f).startswith(simId) and not str(f).find('cl') == -1 and str(f).endswith("output.txt")):
+            #read new data logs
             if not str(f) in live_client_data:
                 cdata = pd.read_csv(path + "/" + str(f), sep = ";")
                 client_dict = {}
                 client_dict["lastRead"] = len(cdata.index)
-                #get buffer level
-                bl = cdata.copy()
-                bl = bl[["Time_Now","Buffer_Level"]].dropna()
-                bl["Time_Now"] = pd.to_timedelta(bl["Time_Now"], unit = 'nanoseconds')
-                client_dict['bl'] = bl
-                #get throughput
-                tp = cdata.copy()
-                tp = tp[["Time_Now","Bytes_Received"]].dropna()
-                tp["Time_Now"] = pd.to_timedelta(tp["Time_Now"], unit = 'seconds')
-                tp = tp.resample('1S', on= "Time_Now").sum() #TODO always start resampling at 2s
-                tp.index = tp.index.seconds
-                tp["Bytes_Received"] = tp["Bytes_Received"] * 8 * 0.001
-                client_dict['tp'] = tp
+                client_dict["df"] = cdata
                 live_client_data[str(f)] = client_dict
             else:
-                cdata = pd.read_csv(path + "/" + str(f), sep = ";", skiprows=range(1, live_client_data[str(f)]["lastRead"]))
-                client_dict = {}
-                client_dict["lastRead"] = live_client_data[str(f)]["lastRead"] + len(cdata.index)
-                #get buffer level
-                bl = cdata.copy()
-                bl = bl[["Time_Now","Buffer_Level"]].dropna()
-                bl["Time_Now"] = pd.to_timedelta(bl["Time_Now"], unit = 'nanoseconds')
-                new_bl = live_client_data[str(f)]['bl'].append(bl)
-                client_dict['bl'] = new_bl
+                client_dict = live_client_data[str(f)]
+                cdata = pd.read_csv(path + "/" + str(f), sep = ";", skiprows=range(1, client_dict["lastRead"]))
+                client_dict["df"] = client_dict["df"].append(cdata)
+                client_dict["lastRead"] = client_dict["lastRead"] + len(cdata.index)
+
+            if not unit + "_lastRead" in client_dict:
+                df = client_dict["df"].copy()
+                client_dict[unit +"_lastRead"] = len(df)
+                df = df[[ extract_unit[unit]["index"], extract_unit[unit]["value"] ]].dropna()
+                df[extract_unit[unit]["index"]] = pd.to_timedelta(df[extract_unit[unit]["index"]], unit = extract_unit[unit]["timeUnit"])
+                if extract_unit[unit]["resample"]:
+                    df = df.resample('1S', on= extract_unit[unit]["index"]).sum() #TODO always start resampling at 2s
+                    if not df.empty:
+                        df.index = df.index.seconds
+                        df[extract_unit[unit]["value"]] = df[extract_unit[unit]["value"]] * 8 * 0.001
+                client_dict[unit] = df
                 
-                #get throughput
-                tp = cdata.copy()
-                tp = tp[["Time_Now","Bytes_Received"]].dropna()
-                tp["Time_Now"] = pd.to_timedelta(tp["Time_Now"], unit = 'seconds')
-                tp = tp.resample('1S', on= "Time_Now").sum() #TODO always start resampling at 2s
-                if not tp.empty:
-                    tp.index = tp.index.seconds
-                    tp["Bytes_Received"] = tp["Bytes_Received"] * 8 * 0.001
-                    new_tp = live_client_data[str(f)]['tp'].append(tp)
-                    client_dict['tp'] = new_tp
-                else:
-                    client_dict['tp'] = live_client_data[str(f)]['tp'].append(tp)
-                live_client_data[str(f)] = client_dict
-                
+            else:
+                lastRead = client_dict[unit +"_lastRead"]
+                df = client_dict["df"][lastRead:].copy()
+                df = df[[ extract_unit[unit]["index"], extract_unit[unit]["value"] ]].dropna()
+                df[extract_unit[unit]["index"]] = pd.to_timedelta(df[extract_unit[unit]["index"]], unit = extract_unit[unit]["timeUnit"])
+                if extract_unit[unit]["resample"]:
+                    df = df.resample('1S', on= extract_unit[unit]["index"]).sum() #TODO always start resampling at 2s
+                    if not df.empty:
+                        df.index = df.index.seconds
+                        df[extract_unit[unit]["value"]] = df[extract_unit[unit]["value"]] * 8 * 0.001
+                new_df = client_dict[unit].append(df)
+                client_dict[unit] = new_df
+                client_dict[unit +"_lastRead"] = len(client_dict["df"].index)
+            
+            
     app_state["loading"] = False
-                
 
-
+                    
+                    
+        
 
 #get the average of all dataframes
 def get_average(dfs):
@@ -413,6 +424,7 @@ results_content = html.Div([
         dbc.Row(id="tpGraph"),
         dbc.Row(id="blGraph"),
         dbc.Row(id="bulGraph"),
+        dbc.Row(id="qualLevelGraph"),
         dbc.Row(id="segSizeGraph")
     ])
 
@@ -448,6 +460,8 @@ liveRes_content = html.Div([
         [
             dbc.Tab(label='Buffer Level', tab_id='bl'),
             dbc.Tab(label='Throughput', tab_id='tp'),
+            dbc.Tab(label='Segment Size', tab_id='segSize'),
+            dbc.Tab(label='Video Quality', tab_id='qualLevel'),
             dbc.Tab(label='Average Throughput', tab_id='avgTp'),
         ],
         id="liveTabs",
@@ -565,7 +579,8 @@ def loadSimData(n, simId, nrClients, simName):
     Output('tpAvgGraph', 'children'),
     Output('blGraph', 'children'),
     Output('bulGraph', 'children'),
-    Output('segSizeGraph', 'children')],
+    Output('segSizeGraph', 'children'),
+    Output('qualLevelGraph', 'children')],
     Input('selectOutputs','value')
 )
 def update_allGraphs(clients):
@@ -574,6 +589,7 @@ def update_allGraphs(clients):
     blFig = go.Figure()
     bulFig = go.Figure()
     segSizeFig = go.Figure()
+    qualLevelFig = go.Figure()
     dfs = []
     
     if client_data:
@@ -648,9 +664,21 @@ def update_allGraphs(clients):
         height=700)
         segSizeGraph = dbc.Col(dcc.Graph(id="graph", figure= segSizeFig))
 
-        return tpGraph, tpAvgGraph, blGraph, bulGraph, segSizeGraph
+        for client in clients:
+            df = client_data[str(client)]['qualLevel']
+            qualLevelFig.add_scatter(x=df["Time_Now"], y=df["Rep_Level"], mode='lines', line_shape='hv', name=str(client))
+        qualLevelFig.update_layout(xaxis_title="seconds",
+        yaxis_title="Quality Level",
+        title="Video Quality",
+        template="plotly_dark",
+        plot_bgcolor='#272B30',
+        paper_bgcolor='#272B30',
+        height=700)
+        qualLevelGraph = dbc.Col(dcc.Graph(id="graph", figure= qualLevelFig))
+
+        return tpGraph, tpAvgGraph, blGraph, bulGraph, segSizeGraph, qualLevelGraph
     else:
-        return [], [], [], [], []
+        return [], [], [], [], [], []
 
 #prepare a new simulation
 @app.callback(
@@ -732,13 +760,14 @@ def start_newSim(p, name, simId, panda, tobasco, festive, servers, video, tcp, r
               Input('live_update', 'n_intervals'),
               State('live_data', 'children'),
               State('tabs', 'active_tab'),
-              State('liveTabs', 'active_tab'))
-def updateLiveGraphs(n ,liveData, tab, liveTab):
+              State('liveTabs', 'active_tab'),
+              State('liveGraph', 'children'),)
+def updateLiveGraphs(n ,liveData, tab, liveTab, prevGraph):
     if tab == 'live' and liveData:
         livePath = liveData[0]
         liveId = "sim" + str(liveData[1])
         if not app_state["loading"]:
-            load_live_data(livePath, liveId, liveTab)
+            new_load_live_data(livePath, liveId, liveTab)
         Fig = go.Figure()
         clients = get_outputs(livePath, liveId)
         if liveTab == 'bl':
@@ -769,6 +798,34 @@ def updateLiveGraphs(n ,liveData, tab, liveTab):
             height=700)
             tpGraph = dbc.Col(dcc.Graph(id="graph", figure= Fig))
             return tpGraph, False
+        if liveTab == 'segSize':
+            for client in clients:
+                if str(client) in live_client_data and 'segSize' in live_client_data[str(client)]:
+                    df = live_client_data[str(client)]['segSize']
+                    Fig.add_scatter(x=df["Download_Request_Sent"], y=df["Segment_Size"], mode='lines', line_shape='hv', name=str(client))
+            Fig.update_layout(xaxis_title="seconds",
+            yaxis_title="Segment Size",
+            title="SegmentSize",
+            template="plotly_dark",
+            plot_bgcolor='#272B30',
+            paper_bgcolor='#272B30',
+            height=700)
+            segSizeGraph = dbc.Col(dcc.Graph(id="graph", figure= Fig))
+            return segSizeGraph, False
+        if liveTab == 'qualLevel':
+            for client in clients:
+                if str(client) in live_client_data and 'qualLevel' in live_client_data[str(client)]:
+                    df = live_client_data[str(client)]['qualLevel']
+                    Fig.add_scatter(x=df["Time_Now"], y=df["Rep_Level"], mode='lines', line_shape='hv', name=str(client))
+            Fig.update_layout(xaxis_title="seconds",
+            yaxis_title="Quality Level",
+            title="Video Quality",
+            template="plotly_dark",
+            plot_bgcolor='#272B30',
+            paper_bgcolor='#272B30',
+            height=700)
+            qualLevelGraph = dbc.Col(dcc.Graph(id="graph", figure= Fig))
+            return qualLevelGraph, False
         if liveTab == 'avgTp':
             dfs = []
             abrAlgos = {}
@@ -795,6 +852,7 @@ def updateLiveGraphs(n ,liveData, tab, liveTab):
             height=700)
             tpAvgGraph = dbc.Col(dcc.Graph(id="graph", figure=Fig))
             return tpAvgGraph, False
+        
         return [], False
     return [], True
 
