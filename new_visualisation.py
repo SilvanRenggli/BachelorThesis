@@ -28,7 +28,7 @@ path = "./dash-log-files/" #/ns3/ns-3.29
 client_data = {}
 router_data = {}
 live_client_data = {}
-app_state = { "loading" : False, "simFinished" : True}
+app_state = { "loading" : False, "simFinished" : True, "realTimeFile" : ""}
 extract_unit = { 
                 "bl" : {"index": "Time_Now", "value": "Buffer_Level", "resample": False, "timeUnit": 'nanoseconds'},
                 "tp" : {"index": "Time_Now", "value": "Bytes_Received", "resample": True, "timeUnit": 'seconds'},
@@ -36,7 +36,7 @@ extract_unit = {
                 "qualLevel" : {"index": "Time_Now", "value": "Rep_Level", "resample": False, "timeUnit": 'nanoseconds'},
                 }
 
-congestionProtocols = [{"label": 'TcpNewReno', "value": 'ns3::TcpNewReno'}, {"label": 'TcpCubic', "value": 'ns3::TcpCubic'}, {"label": 'TcpWestwood', "value": 'ns3::TcpWestwood'}, {"label": 'TcpVegas', "value": 'ns3::TcpVegas'}, {"label": 'TcpVeno', "value": 'ns3::TcpVeno'}, {"label": 'TcpBic', "value": 'ns3::TcpBic'}] 
+congestionProtocols = [{"label": 'TcpNewReno', "value": 'ns3::TcpNewReno'}, {"label": 'TcpWestwood', "value": 'ns3::TcpWestwood'}, {"label": 'TcpVegas', "value": 'ns3::TcpVegas'}, {"label": 'TcpVeno', "value": 'ns3::TcpVeno'}, {"label": 'TcpBic', "value": 'ns3::TcpBic'}] #{"label": 'TcpCubic', "value": 'ns3::TcpCubic'}
 
 #returns the id of a simulation file
 def get_sim_id(file):
@@ -409,6 +409,33 @@ videoFile = dbc.Col(
                     width = 2, align = 'end'
                 )
 
+liveEventType = dbc.Col(
+                    dbc.FormGroup([
+                        dbc.Label("Event Type", html_for="eventType"),
+                        dbc.Select(
+                            id="liveEventType",
+                            options=[
+                                {"label": "Bottleneck Rate", "value": "BottleneckRate"},
+                                {"label": "End Simulation", "value": "EndSimulation"}
+                            ],
+                            value = "BottleneckRate"
+                        )
+                    ]),
+                    width = {'size': 2, 'offset': 1}, align = 'end'
+                )
+
+liveEventRateBottleneck = dbc.Col(
+                    dbc.FormGroup([
+                        dbc.Label("Datarate of bottleneck (Mbps):", html_for="liveEventRateBottleneck"),
+                         dbc.Input( 
+                            id ='liveEventRateBottleneck',
+                            value=100,
+                            type = "number", min=1, max=10000, step=1
+                        )     
+                    ]),
+                    width = 1
+                )
+
 results_content = html.Div([
         dbc.Row([]),
         dbc.Row([
@@ -472,7 +499,12 @@ liveRes_content = html.Div([
             id = 'live_update',
             interval = 1*1000,
             n_intervals = 0,
-        )
+        ),
+         dbc.Row([
+            liveEventType,
+            liveEventRateBottleneck,
+            dbc.Col(dbc.Button("Execute Event", color="primary", id="liveEventButton", type= 'submit'), align='center')
+        ]),
     ])
 
 #show content of selected tab
@@ -708,9 +740,12 @@ def prepare_newSim(n, name, simId, panda, tobasco, festive, servers, video, tcp,
         eventFile = open(livePath + "sim" + str(simId) + "_event_schedule.txt", "w")
         eventFile.write("Event Time Parameters\n")
         #eventFile.write("BottleNeckRate 0 " + str(rateBottle) + "\n")
-        eventFile.write("BottleNeckRate 20 1Mbps\n")
-        eventFile.write("BottleNeckRate 100 100Mbps\n")
+        #eventFile.write("BottleNeckRate 20 1Mbps\n")
+        #eventFile.write("BottleNeckRate 100 100Mbps\n")
         eventFile.close()
+        realTimeEventFile = open(livePath + "sim" + str(simId) + "_real_time_events.txt", "w")
+        app_state["realTimeFile"] = livePath + "sim" + str(simId) + "_real_time_events.txt"
+        realTimeEventFile.close()
         return  [livePath, simId]
     return []
 
@@ -750,7 +785,7 @@ def start_newSim(p, name, simId, panda, tobasco, festive, servers, video, tcp, r
             --bottleNeckDelay=" + str(delayBottle) + "ms \
             --channelRate=" + str(rateClients) + "Mbps \
             --channelDelay=" + str(delayClients) + "ms \
-            --liveInputs=" + str(0) + "\"")
+            --liveInputs=" + str(1) + "\"")
         print("sim finished")
         app_state["simFinished"] = True
         return  'primary'
@@ -858,6 +893,20 @@ def updateLiveGraphs(n ,liveData, tab, liveTab, prevGraph):
         
         return [], False
     return [], True
+
+#execute a live event
+@app.callback(
+    Output('liveEventButton', 'color'),
+    Input('liveEventButton', 'n_clicks'),
+    State('liveEventType', 'value'),
+    State('liveEventRateBottleneck', 'value'),
+)
+def executeEvent(n, eventType, bottleneckRate):
+    if n > 0:
+        realTimeEventFile = open(app_state["realTimeFile"], "a")
+        realTimeEventFile.write(eventType + " " + str(bottleneckRate)+"Mbps" + "\n")
+        realTimeEventFile.close()
+    return "primary"
 
 if __name__ == '__main__':
     app.run_server(debug=True)

@@ -54,6 +54,7 @@ uint32_t pandaClients;
 uint32_t tobascoClients;
 uint32_t festiveClients;
 uint32_t live_inputs;
+uint32_t live_event_index;
 std::string simulationName;
 std::string segmentSizeFilePath;
 std::string tcpModel;
@@ -101,7 +102,7 @@ changeBottleneckRate (const std::string& value)
 void
 ScheduleEvents (const char* eventFilePath)
 {
-  std::cerr << "called " << eventFilePath <<"\n";
+  //std::cerr << "called " << eventFilePath <<"\n";
   std::ifstream efile(eventFilePath);
   std::string line;
   std::getline(efile, line);
@@ -120,13 +121,41 @@ ScheduleEvents (const char* eventFilePath)
     }
     std::cerr << event << " " << std::to_string(time) << " " << value << "\n";
   }
+  efile.close();
 }
 
 void
-CheckLiveEvents ()
+CheckLiveEvents (const std::string& liveEventFilePath)
 {
-  std::cerr << "checked events\n";
-  Simulator::Schedule (MilliSeconds (100), &CheckLiveEvents);
+  std::cerr << "called " << liveEventFilePath <<"\n";
+  std::ifstream efile(liveEventFilePath);
+  std::string line;
+  uint64_t line_count = 0;
+  while (std::getline(efile, line))
+  { 
+    line_count ++;
+    if(line_count > live_event_index){
+      std::istringstream iss(line);
+      std::cerr << line <<"\n";
+      std::string event;
+      std::string value;
+      if (!(iss >> event >> value)) {
+        //std::cerr << "invalid event schedule file!" << "\n";
+        line_count --;
+        break;
+      }
+      if (event == "BottleneckRate"){
+        std::cerr << event << " " << Simulator::Now ().GetMicroSeconds () / (double) 1000000 << " " << value << "\n";
+        Simulator::Schedule(Seconds (0.001), &changeBottleneckRate, value);
+      }
+      if (event == "EndSimulation"){
+        Simulator::Stop ();
+      }
+    }
+  }
+  live_event_index = line_count;
+  Simulator::Schedule (Seconds (1), &CheckLiveEvents, liveEventFilePath);
+  efile.close();
 }
 
 int
@@ -157,6 +186,7 @@ main (int argc, char *argv[])
   cmd.AddValue ("liveInputs", "Wheter live inputs are enabled or not 1 or 0", live_inputs);
   cmd.Parse (argc, argv);
 
+  live_event_index = 0;
 
   if (numberOfClients != pandaClients + tobascoClients + festiveClients){
     std::cerr << "clients per algorithm doesn't match nr of clients!" << "\n";
@@ -289,12 +319,17 @@ main (int argc, char *argv[])
   // load scheduled events
   ScheduleEvents((dirstr + "sim" + ToString(simulationId) + "_event_schedule.txt").c_str());
 
+  if (live_inputs != 0){
+    CheckLiveEvents((dirstr + "sim" + ToString(simulationId) + "_real_time_events.txt"));
+  }
+
   // create logfile for event logging
   
   Log = dashLogDirectory + simulationName + "/" + ToString(numberOfClients)  + "/sim" + ToString(simulationId) + "_" + "event_log.txt";
   eventLog.open (Log.c_str ());
   eventLog << "Time_Now;Event;Value\n";
   eventLog.flush ();
+  
 
   uint clientsPerServer = numberOfClients / numberOfServers;
   for (uint i = 0; i < serverNodes.GetN (); i++)
@@ -332,9 +367,7 @@ main (int argc, char *argv[])
       clientApp.Start (Seconds (2.0));
     }
 
-  if (live_inputs != 0){
-    Simulator::Schedule (Seconds (0), &CheckLiveEvents);
-  }
+ 
   
   NS_LOG_INFO ("Run Simulation.");
   NS_LOG_INFO ("Sim: " << simulationId << "Clients: " << numberOfClients);
