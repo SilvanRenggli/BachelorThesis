@@ -275,6 +275,22 @@ newId = dbc.Col(
                     width = 1
                 )
 
+enableLiveInputs = dbc.Col( 
+                    dbc.FormGroup([
+                        dbc.Label("Live Inputs"),
+                        dbc.Checklist(
+                            options=[
+                                {"label": "Enabled", "value": 0},
+                            ],
+                            labelCheckedStyle={"color": "green"},
+                            value=[],
+                            id="live-inputs",
+                            inline=True,
+                        )
+                    ]),
+                    width = 1
+)
+
 pandaClients = dbc.Col(
                     dbc.FormGroup([
                         dbc.Label("Clients using Panda", html_for="pandaClients"),
@@ -346,6 +362,22 @@ selectTcp = dbc.Col(
                     ]),
                     width = {'size': 2, 'offset': 1}
                 )
+
+enablePacing = dbc.Col( 
+                    dbc.FormGroup([
+                        dbc.Label("Packet Pacing"),
+                        dbc.Checklist(
+                            options=[
+                                {"label": "Enabled", "value": 0},
+                            ],
+                            labelCheckedStyle={"color": "green"},
+                            value=[],
+                            id="packet-pacing",
+                            inline=True,
+                        )
+                    ]),
+                    width = 1
+)
 
 rateClients = dbc.Col(
                     dbc.FormGroup([
@@ -460,7 +492,7 @@ newSim_content = html.Div([
         dbc.Row([
             newName,
             newId,
-            selectTcp
+            enableLiveInputs
         ]),
         dbc.Row([
             pandaClients,
@@ -474,6 +506,10 @@ newSim_content = html.Div([
             delayClients,
             rateBottleneck,
             delayBottleneck
+        ]),
+        dbc.Row([
+            selectTcp,
+            enablePacing
         ]),
         dbc.Row([
             dbc.Col(
@@ -785,7 +821,8 @@ def start_newSim(p, name, simId, panda, tobasco, festive, servers, video, tcp, r
             --bottleNeckDelay=" + str(delayBottle) + "ms \
             --channelRate=" + str(rateClients) + "Mbps \
             --channelDelay=" + str(delayClients) + "ms \
-            --liveInputs=" + str(1) + "\"")
+            --liveInputs=" + str(0) + " \
+            --packetPacing=" + str(0) + "\"")
         print("sim finished")
         app_state["simFinished"] = True
         return  'primary'

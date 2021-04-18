@@ -53,7 +53,8 @@ uint32_t numberOfServers;
 uint32_t pandaClients;
 uint32_t tobascoClients;
 uint32_t festiveClients;
-uint32_t live_inputs;
+uint32_t liveInputs;
+uint32_t enablePacing;
 uint32_t live_event_index;
 std::string simulationName;
 std::string segmentSizeFilePath;
@@ -183,10 +184,12 @@ main (int argc, char *argv[])
   cmd.AddValue ("bottleNeckDelay", "The delay of the bottleneck link", bottleNeckDelay);
   cmd.AddValue ("channelRate", "The data rate of all other links", channelRate);
   cmd.AddValue ("channelDelay", "The delay of all other links", channelDelay);
-  cmd.AddValue ("liveInputs", "Wheter live inputs are enabled or not 1 or 0", live_inputs);
+  cmd.AddValue ("liveInputs", "Wheter live inputs are enabled or not. 1 or 0", liveInputs);
+  cmd.AddValue ("packetPacing", "Wheter packet pacing is enabled or not. 1 or 0", enablePacing);
   cmd.Parse (argc, argv);
 
   live_event_index = 0;
+  DataRate maxPacingRate (channelRate);
 
   if (numberOfClients != pandaClients + tobascoClients + festiveClients){
     std::cerr << "clients per algorithm doesn't match nr of clients!" << "\n";
@@ -196,6 +199,8 @@ main (int argc, char *argv[])
   Config::SetDefault("ns3::TcpSocket::SegmentSize", UintegerValue (1446));
   Config::SetDefault("ns3::TcpSocket::SndBufSize", UintegerValue (524288));
   Config::SetDefault("ns3::TcpSocket::RcvBufSize", UintegerValue (524288));
+
+  
 
 
   //Create nodes
@@ -208,19 +213,33 @@ main (int argc, char *argv[])
   serverNodes.Create(numberOfServers);
   
   //Create channels
+
   ns3::PointToPointHelper bottleNeckLink;
   bottleNeckLink.SetDeviceAttribute("DataRate", StringValue (bottleNeckRate)); 
   bottleNeckLink.SetChannelAttribute ("Delay", StringValue (bottleNeckDelay));
   ns3::NetDeviceContainer routerdevices = bottleNeckLink.Install(routerNodes);
 
+  ns3::NetDeviceContainer rightrouterdevices;
+  ns3::NetDeviceContainer serverdevices;
+  
+  Config::SetDefault ("ns3::TcpSocketState::EnablePacing", BooleanValue (enablePacing));
+  Config::SetDefault ("ns3::TcpSocketState::MaxPacingRate", DataRateValue (maxPacingRate));
+
+  for (uint32_t i = 0; i < numberOfServers; ++i) {
+        // add the servers right router channels
+        ns3::NetDeviceContainer serverClient =
+            bottleNeckLink.Install(routerNodes.Get(1), serverNodes.Get(i));
+        rightrouterdevices.Add(serverClient.Get(0));
+        serverdevices.Add(serverClient.Get(1));
+    }
+
+  
   ns3::PointToPointHelper pointToPointLeaf; 
   pointToPointLeaf.SetDeviceAttribute("DataRate", StringValue (channelRate)); 
   pointToPointLeaf.SetChannelAttribute("Delay", StringValue (channelDelay));
 
   ns3::NetDeviceContainer leftrouterdevices;
   ns3::NetDeviceContainer clientdevices;
-  ns3::NetDeviceContainer rightrouterdevices;
-  ns3::NetDeviceContainer serverdevices;
   
    for (uint32_t i = 0; i < numberOfClients; ++i) {
         // add the client left router channels
@@ -230,18 +249,15 @@ main (int argc, char *argv[])
         clientdevices.Add(routerClient.Get(1));
     }
 
-  for (uint32_t i = 0; i < numberOfServers; ++i) {
-        // add the servers right router channels
-        ns3::NetDeviceContainer serverClient =
-            pointToPointLeaf.Install(routerNodes.Get(1), serverNodes.Get(i));
-        rightrouterdevices.Add(serverClient.Get(0));
-        serverdevices.Add(serverClient.Get(1));
-    }
   
   // install internet stack on all nodes
 
   ns3::InternetStackHelper stack;
+
+  Config::SetDefault ("ns3::TcpSocketState::EnablePacing", BooleanValue (false));
   stack.Install(routerNodes);
+
+  Config::SetDefault ("ns3::TcpSocketState::EnablePacing", BooleanValue (enablePacing));
   stack.Install(clientNodes);
   stack.Install(serverNodes);
 
@@ -319,7 +335,7 @@ main (int argc, char *argv[])
   // load scheduled events
   ScheduleEvents((dirstr + "sim" + ToString(simulationId) + "_event_schedule.txt").c_str());
 
-  if (live_inputs != 0){
+  if (liveInputs != 0){
     CheckLiveEvents((dirstr + "sim" + ToString(simulationId) + "_real_time_events.txt"));
   }
 
