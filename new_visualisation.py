@@ -21,14 +21,14 @@ from functools import reduce
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.SLATE], suppress_callback_exceptions=True)
 
-#Set Path to data logs TODO: User can set this path inside the dashboard
 
-path = "./dash-log-files/" #/ns3/ns-3.29
+path = "./dash-log-files/" 
+scratchPath = "./scratch/"
 
 client_data = {}
 router_data = {}
 live_client_data = {}
-app_state = { "loading" : False, "simFinished" : True, "realTimeFile" : ""}
+app_state = { "loading" : False, "simFinished" : True, "realTimeFile" : "", "eventSchedule" : [], "clients": []}
 extract_unit = { 
                 "bl" : {"index": "Time_Now", "value": "Buffer_Level", "resample": False, "timeUnit": 'nanoseconds'},
                 "tp" : {"index": "Time_Now", "value": "Bytes_Received", "resample": True, "timeUnit": 'seconds'},
@@ -37,6 +37,7 @@ extract_unit = {
                 }
 
 congestionProtocols = [{"label": 'TcpNewReno', "value": 'ns3::TcpNewReno'}, {"label": 'TcpWestwood', "value": 'ns3::TcpWestwood'}, {"label": 'TcpVegas', "value": 'ns3::TcpVegas'}, {"label": 'TcpVeno', "value": 'ns3::TcpVeno'}, {"label": 'TcpBic', "value": 'ns3::TcpBic'}] #{"label": 'TcpCubic', "value": 'ns3::TcpCubic'}
+abrAlgorithms = ["panda", "tobasco", "festive"]
 
 #returns the id of a simulation file
 def get_sim_id(file):
@@ -54,16 +55,23 @@ def get_outputs(path, simId):
             outputs.append(str(f))
     return outputs
 
+#returns all available scripts
+def get_scripts():
+    scripts = []
+    for f in list( listdir( scratchPath )):
+        if not str(f) == "scratch-simulator.cc" and str(f).endswith(".cc"):
+            scripts.append(str(f)[:-3])
+    return scripts
+
 app.layout = html.Div([
     dbc.Tabs(
         [
-            dbc.Tab(label='Simulation Results', tab_id='results'),
-            dbc.Tab(label='Compare Simulations', tab_id='compare'),
             dbc.Tab(label='New Simulation', tab_id='new'),
+            dbc.Tab(label='Simulation Results', tab_id='results'),
             dbc.Tab(label='Live Results', tab_id='live'),
         ],
         id="tabs",
-        active_tab="results"
+        active_tab="new"
     ),
 
     html.Div(id='tab-content'),
@@ -204,7 +212,6 @@ selectSimName = dbc.Col(
                     width = {'size': 2, 'offset': 1}
                 )
 
-
 selectNrClients = dbc.Col(
                     dbc.FormGroup([
                         dbc.Label("#Clients", html_for="nrClients"),
@@ -251,6 +258,7 @@ selectOutputs = dbc.Col(
                     width = {'size': 10, 'offset': 1}
                 )
 
+
 newName = dbc.Col(
                     dbc.FormGroup([
                         dbc.Label("Simulation Name", html_for="newName"),
@@ -273,6 +281,20 @@ newId = dbc.Col(
                         )   
                     ]),
                     width = 1
+                )
+
+newSimScript = dbc.Col(
+                    dbc.FormGroup([
+                        dbc.Label("Simulation Script", html_for="simScript"),
+                        dbc.Select(
+                            id="simScript",
+                            options=[
+                                {"label": f, "value": f} for f in get_scripts()
+                            ],
+                            value = get_scripts()[0]
+                        )
+                    ]),
+                    width = {'size': 2}
                 )
 
 enableLiveInputs = dbc.Col( 
@@ -381,11 +403,11 @@ enablePacing = dbc.Col(
 
 rateClients = dbc.Col(
                     dbc.FormGroup([
-                        dbc.Label("Datarate for clients (Mbps):", html_for="rateClients"),
-                         dbc.Input( 
+                        dbc.Label("Datarate for clients (Kbps):", html_for="rateClients"),
+                         dbc.Input(
                             id ='rateClients',
-                            value=5,
-                            type = "number", min=1, max=10000, step=1
+                            value=5000,
+                            type = "number", min=100, max=1000000, step=1
                         )     
                     ]),
                     width = {'size': 1, 'offset': 1}
@@ -405,11 +427,11 @@ delayClients = dbc.Col(
 
 rateBottleneck = dbc.Col(
                     dbc.FormGroup([
-                        dbc.Label("Datarate of bottleneck (Mbps):", html_for="rateBottle"),
+                        dbc.Label("Datarate of bottleneck (Kbps):", html_for="rateBottle"),
                          dbc.Input( 
                             id ='rateBottle',
-                            value=100,
-                            type = "number", min=1, max=10000, step=1
+                            value=5000,
+                            type = "number", min=100, max=100000, step=1
                         )     
                     ]),
                     width = 1
@@ -443,7 +465,7 @@ videoFile = dbc.Col(
 
 liveEventType = dbc.Col(
                     dbc.FormGroup([
-                        dbc.Label("Event Type", html_for="eventType"),
+                        dbc.Label("Event Type", html_for="liveEventType"),
                         dbc.Select(
                             id="liveEventType",
                             options=[
@@ -458,15 +480,84 @@ liveEventType = dbc.Col(
 
 liveEventRateBottleneck = dbc.Col(
                     dbc.FormGroup([
-                        dbc.Label("Datarate of bottleneck (Mbps):", html_for="liveEventRateBottleneck"),
+                        dbc.Label("Datarate of bottleneck (Kbps):", html_for="liveEventRateBottleneck"),
                          dbc.Input( 
                             id ='liveEventRateBottleneck',
-                            value=100,
-                            type = "number", min=1, max=10000, step=1
+                            value=5000,
+                            type = "number", min=100, max=100000, step=1
                         )     
                     ]),
                     width = 1
                 )
+
+scheduleEventType = dbc.Col(
+                    dbc.FormGroup([
+                        dbc.Label("Event Type", html_for="scheduleEventType"),
+                        dbc.Select(
+                            id="scheduleEventType",
+                            options=[
+                                {"label": "Bottleneck Rate", "value": "BottleneckRate"},
+                            ],
+                            value = "BottleneckRate"
+                        )
+                    ]),
+                    width = 2, align = 'end'
+                )
+
+scheduleEventRateBottleneck = dbc.Col(
+                    dbc.FormGroup([
+                        dbc.Label("(Kbps):", html_for="scheduleEventRateBottleneck"),
+                         dbc.Input( 
+                            id ='scheduleEventRateBottleneck',
+                            value=5000,
+                            type = "number", min=100, max=100000, step=1
+                        )     
+                    ]),
+                    width = 1
+                )
+
+scheduleEventTime = dbc.Col(
+                    dbc.FormGroup([
+                        dbc.Label("seconds:", html_for="scheduleEventTime"),
+                         dbc.Input( 
+                            id ='scheduleEventTime',
+                            value=10,
+                            type = "number", min=1, max=3600, step=1
+                        )     
+                    ]),
+                    width = {'size':1, 'offset': 1}
+                )
+
+eventSchedule = dbc.Col(
+    html.Div([
+        dbc.Alert(e, color="info") for e in app_state["eventSchedule"]
+    ]), id = 'eventSchedule'
+)
+
+scheduleEvent = dbc.Col(
+                    dbc.Card(
+                        [
+                            dbc.CardHeader(
+                                dbc.Button("Schedule Events", color="secondary", id="scheduleEvent")
+                            ),
+                            dbc.Collapse(
+                                html.Div([
+                                    dbc.Row([eventSchedule]),
+                                    dbc.Row([
+                                        scheduleEventTime,
+                                        scheduleEventType,
+                                        scheduleEventRateBottleneck,
+                                        dbc.Col(dbc.Button("Schedule Event", color="primary", id="scheduleEventButton", type= 'submit'), align='center')
+                                    ])
+                                ]),  
+                                id="scheduleCollapse"    
+                            ),
+                        ]
+                    ),
+                    width = {'size': 10, 'offset': 1}
+                )
+
+
 
 results_content = html.Div([
         dbc.Row([]),
@@ -492,6 +583,7 @@ newSim_content = html.Div([
         dbc.Row([
             newName,
             newId,
+            newSimScript,
             enableLiveInputs
         ]),
         dbc.Row([
@@ -512,10 +604,13 @@ newSim_content = html.Div([
             enablePacing
         ]),
         dbc.Row([
+            scheduleEvent
+        ]),
+        dbc.Row([
             dbc.Col(
-                dbc.Button("New Simulation", color="primary", id="newSimButton", type= 'submit'),
+                dbc.Button("Start Simulation", color="primary", id="newSimButton", type= 'submit'),
                 width = {'size': 10, 'offset': 1})
-        ])
+        ]),
     ])
 
 liveRes_content = html.Div([
@@ -549,10 +644,6 @@ liveRes_content = html.Div([
 def switch_tab(at):
     if at == 'results':
         return results_content
-    elif at == 'compare':
-        return html.Div([
-            html.H3('Compare content')
-        ])
     elif at == 'new':
         return newSim_content
     elif at == 'live':
@@ -621,6 +712,17 @@ def set_selectClients_value(options):
     Input('manageClients', 'n_clicks')
 )
 def toggle_manageClients(n):
+    if n:
+        return (n % 2)
+    else:
+        return False
+
+#toggle whether schedule events options are shown
+@app.callback(
+    Output('scheduleCollapse', 'is_open'),
+    Input('scheduleEvent', 'n_clicks')
+)
+def toggle_scheduleEvents(n):
     if n:
         return (n % 2)
     else:
@@ -775,9 +877,8 @@ def prepare_newSim(n, name, simId, panda, tobasco, festive, servers, video, tcp,
         livePath = path + name + "/" + str(panda + tobasco + festive) + "/"
         eventFile = open(livePath + "sim" + str(simId) + "_event_schedule.txt", "w")
         eventFile.write("Event Time Parameters\n")
-        #eventFile.write("BottleNeckRate 0 " + str(rateBottle) + "\n")
-        #eventFile.write("BottleNeckRate 20 1Mbps\n")
-        #eventFile.write("BottleNeckRate 100 100Mbps\n")
+        for event in app_state["eventSchedule"]:
+            eventFile.write(event)
         eventFile.close()
         realTimeEventFile = open(livePath + "sim" + str(simId) + "_real_time_events.txt", "w")
         app_state["realTimeFile"] = livePath + "sim" + str(simId) + "_real_time_events.txt"
@@ -801,12 +902,17 @@ def prepare_newSim(n, name, simId, panda, tobasco, festive, servers, video, tcp,
     State('delayBottle', 'value'),
     State('rateClients', 'value'),
     State('delayClients', 'value'),
+    State('live-inputs', 'value'),
+    State('packet-pacing', 'value'),
+    State('simScript', 'value')
 )
-def start_newSim(p, name, simId, panda, tobasco, festive, servers, video, tcp, rateBottle, delayBottle, rateClients, delayClients):
+def start_newSim(p, name, simId, panda, tobasco, festive, servers, video, tcp, rateBottle, delayBottle, rateClients, delayClients, lInputs, pacing, script):
     if p and app_state["simFinished"]:
         app_state["simFinished"] = False
+        liveInputsEnabled = 1 if lInputs else 0
+        packetPacingEnabled = 1 if pacing else 0 
         print("starting simulation")
-        system("./waf --run=\"lan-simulation \
+        system("./waf --run=\"" + script +" \
             --simulationName=" + name +" \
             --simulationId=" + str(simId) +" \
             --numberOfClients=" + str(panda + tobasco + festive) + " \
@@ -817,14 +923,15 @@ def start_newSim(p, name, simId, panda, tobasco, festive, servers, video, tcp, r
             --festiveClients=" + str(festive) +" \
             --segmentSizeFile=DashVideos/" + video+" \
             --tcp=" + tcp + " \
-            --bottleNeckRate=" + str(rateBottle) + "Mbps \
+            --bottleNeckRate=" + str(rateBottle) + "Kbps \
             --bottleNeckDelay=" + str(delayBottle) + "ms \
-            --channelRate=" + str(rateClients) + "Mbps \
+            --channelRate=" + str(rateClients) + "Kbps \
             --channelDelay=" + str(delayClients) + "ms \
-            --liveInputs=" + str(0) + " \
-            --packetPacing=" + str(0) + "\"")
+            --liveInputs=" + str(liveInputsEnabled) + " \
+            --packetPacing=" + str(packetPacingEnabled) + "\"")
         print("sim finished")
         app_state["simFinished"] = True
+        app_state["eventSchedule"] = []
         return  'primary'
     print("no sim started")
     return 'primary'
@@ -941,9 +1048,22 @@ def updateLiveGraphs(n ,liveData, tab, liveTab, prevGraph):
 def executeEvent(n, eventType, bottleneckRate):
     if n > 0:
         realTimeEventFile = open(app_state["realTimeFile"], "a")
-        realTimeEventFile.write(eventType + " " + str(bottleneckRate)+"Mbps" + "\n")
+        realTimeEventFile.write(eventType + " " + str(bottleneckRate)+"Kbps" + "\n")
         realTimeEventFile.close()
     return "primary"
+
+#schedule an event
+@app.callback(
+    Output('eventSchedule', 'children'),
+    Input('scheduleEventButton', 'n_clicks'),
+    State('scheduleEventType', 'value'),
+    State('scheduleEventRateBottleneck', 'value'),
+    State('scheduleEventTime', 'value')
+)
+def scheduleEvents(n, eventType, bottleneckRate, time):
+    if n > 0:
+        app_state["eventSchedule"].append(eventType + " " + str(time) + " " + str(bottleneckRate) + "Kbps\n")
+    return [ dbc.Alert(e, color="secondary") for e in app_state["eventSchedule"] ]
 
 if __name__ == '__main__':
     app.run_server(debug=True)
