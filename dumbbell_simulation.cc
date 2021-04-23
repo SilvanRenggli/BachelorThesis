@@ -45,19 +45,14 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE ("TcpStreamExample");
 
-uint64_t segmentDuration;
 // The simulation id is used to distinguish log file results from potentially multiple consequent simulation runs.
 uint32_t simulationId;
 uint32_t numberOfClients;
 uint32_t numberOfServers;
-uint32_t pandaClients;
-uint32_t tobascoClients;
-uint32_t festiveClients;
 uint32_t liveInputs;
 uint32_t enablePacing;
 uint32_t live_event_index;
 std::string simulationName;
-std::string segmentSizeFilePath;
 std::string tcpModel;
 std::string bottleNeckRate;
 std::string bottleNeckDelay;
@@ -67,16 +62,6 @@ std::string channelDelay;
 std::ofstream dataLog;
 std::ofstream eventLog; 
 
-std::string
-GetAdaptionAlgo (uint16_t client_id){
-  if (client_id < pandaClients){
-    return "panda";
-  }else if (client_id < pandaClients + tobascoClients){
-    return "tobasco";
-  }else{
-    return "festive";
-  }
-}
 
 void
 LogPacket (Ptr<const Packet> p)
@@ -102,7 +87,7 @@ changeBottleneckRate (const std::string& value)
 
 
 void
-InstallClients (const std::string& clientFilePath, ns3::NodeContainer clientNodes, ns3::NodeContainer serverNodes, ns3::Ipv4InterfaceContainer serverifs, uint16_t port, uint32_t simulationId, const std::string& simulationName, std::string& segmentSizeFilePath, uint64_t segmentDuration){
+InstallClients (const std::string& clientFilePath, ns3::NodeContainer clientNodes, ns3::NodeContainer serverNodes, ns3::Ipv4InterfaceContainer serverifs, uint16_t port, uint32_t simulationId, const std::string& simulationName){
   std::cerr << "called " << simulationName << std::to_string(simulationId) <<"\n";
   std::ifstream cfile(clientFilePath);
   std::string line;
@@ -120,6 +105,9 @@ InstallClients (const std::string& clientFilePath, ns3::NodeContainer clientNode
     if (!(iss >> amount >> algo >> video >> segDuration)) {
       std::cerr << "invalid client file!" << "\n";
     }
+    video = "./DashVideos/" + video;
+    segDuration = segDuration * 1000000;
+    std::cerr << std::to_string(amount) << " " << algo << " " << video << " " << std::to_string(segDuration) << "\n";
     //install all clients from this batch
     std::vector <std::pair <Ptr<Node>, std::string> > clients;
     uint offset = clientCount;
@@ -141,7 +129,6 @@ InstallClients (const std::string& clientFilePath, ns3::NodeContainer clientNode
 
     ApplicationContainer clientApp = clientHelper.Install (clients, offset);
     clientApp.Start (Seconds (2.0));
-    std::cerr << std::to_string(amount) << " " << algo << " " << video << " " << std::to_string(segDuration) << "\n";
   }
   cfile.close();
 }
@@ -220,11 +207,6 @@ main (int argc, char *argv[])
   cmd.AddValue ("simulationId", "The simulation's index (for logging purposes)", simulationId);
   cmd.AddValue ("numberOfClients", "The number of clients", numberOfClients);
   cmd.AddValue ("numberOfServers", "The number of servers", numberOfServers);
-  cmd.AddValue ("segmentDuration", "The duration of a video segment in microseconds", segmentDuration);
-  cmd.AddValue ("pandaClients", "The nr of clients using panda", pandaClients);
-  cmd.AddValue ("tobascoClients", "The nr of clients using tobasco", tobascoClients);
-  cmd.AddValue ("festiveClients", "The nr of clients using festive", festiveClients);
-  cmd.AddValue ("segmentSizeFile", "The relative path (from ns-3.x directory) to the file containing the segment sizes in bytes", segmentSizeFilePath);
   cmd.AddValue ("tcp", "The tcp implementation that the simulation uses", tcpModel);
   cmd.AddValue ("bottleNeckRate", "The data rate of the bottleneck link", bottleNeckRate);
   cmd.AddValue ("bottleNeckDelay", "The delay of the bottleneck link", bottleNeckDelay);
@@ -237,10 +219,6 @@ main (int argc, char *argv[])
   live_event_index = 0;
   DataRate maxPacingRate (channelRate);
 
-  if (numberOfClients != pandaClients + tobascoClients + festiveClients){
-    std::cerr << "clients per algorithm doesn't match nr of clients!" << "\n";
-    return -1;
-  }
   Config::SetDefault ("ns3::TcpL4Protocol::SocketType", StringValue (tcpModel));
   Config::SetDefault("ns3::TcpSocket::SegmentSize", UintegerValue (1446));
   Config::SetDefault("ns3::TcpSocket::SndBufSize", UintegerValue (524288));
@@ -393,7 +371,7 @@ main (int argc, char *argv[])
       serverApps.Start (Seconds (1.0));
     }
 
-  InstallClients((dirstr + "sim" + ToString(simulationId) + "_clients.txt"), clientNodes, serverNodes, serverifs, port, simulationId, simulationName, segmentSizeFilePath, segmentDuration );
+  InstallClients((dirstr + "sim" + ToString(simulationId) + "_clients.txt"), clientNodes, serverNodes, serverifs, port, simulationId, simulationName);
 
  
   

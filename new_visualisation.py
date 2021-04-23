@@ -28,7 +28,7 @@ scratchPath = "./scratch/"
 client_data = {}
 router_data = {}
 live_client_data = {}
-app_state = { "loading" : False, "simFinished" : True, "realTimeFile" : "", "eventSchedule" : [], "clients": []}
+app_state = { "loading" : False, "simFinished" : True, "realTimeFile" : "", "eventSchedule" : [], "clients": [], "nrClients": 0}
 extract_unit = { 
                 "bl" : {"index": "Time_Now", "value": "Buffer_Level", "resample": False, "timeUnit": 'nanoseconds'},
                 "tp" : {"index": "Time_Now", "value": "Bytes_Received", "resample": True, "timeUnit": 'seconds'},
@@ -196,67 +196,91 @@ def get_algo(client):
     result = re.search('cl\d+_(.*)_output.txt', client)
     return result.group(1)
 
+def refresh_simulation_results():
 
-#Components for result visualisation:
-selectSimName = dbc.Col(
-                    dbc.FormGroup([
-                        dbc.Label("Simulation", html_for="simName"),
-                        dbc.Select(
-                            id="simName",
-                            options=[
-                                {"label": f, "value": f} for f in sorted(list(listdir(path)))
-                            ],
-                            value = sorted(list(listdir(path)))[0]
-                        )
-                    ]),
-                    width = {'size': 2, 'offset': 1}
-                )
+    #Components for result visualisation:
+    selectSimName = dbc.Col(
+                        dbc.FormGroup([
+                            dbc.Label("Simulation", html_for="simName"),
+                            dbc.Select(
+                                id="simName",
+                                options=[
+                                    {"label": f, "value": f} for f in sorted(list(listdir(path)))
+                                ],
+                                value = sorted(list(listdir(path)))[0] if listdir(path) else "no simulations found"
+                            )
+                        ]),
+                        width = {'size': 2, 'offset': 1}
+                    )
 
-selectNrClients = dbc.Col(
-                    dbc.FormGroup([
-                        dbc.Label("#Clients", html_for="nrClients"),
-                        dbc.Select(
-                            id ='nrClients',
-                            options=[
-                            ],
-                            value='',
-                        )   
-                    ]),
-                    width = 2
-                )
+    selectNrClients = dbc.Col(
+                        dbc.FormGroup([
+                            dbc.Label("#Clients", html_for="nrClients"),
+                            dbc.Select(
+                                id ='nrClients',
+                                options=[
+                                ],
+                                value='',
+                            )   
+                        ]),
+                        width = 2
+                    )
 
-selectSimId = dbc.Col(
-                    dbc.FormGroup([
-                        dbc.Label("Simulation ID", html_for="simId"),
-                        dbc.Select(
-                            id ='simId',
-                            options=[
-                            ],
-                            value='',
-                        )   
-                    ]),
-                    width = 2
-                )
+    selectSimId = dbc.Col(
+                        dbc.FormGroup([
+                            dbc.Label("Simulation ID", html_for="simId"),
+                            dbc.Select(
+                                id ='simId',
+                                options=[
+                                ],
+                                value='',
+                            )   
+                        ]),
+                        width = 2
+                    )
 
-selectOutputs = dbc.Col(
-                    dbc.Card(
-                        [
-                            dbc.CardHeader(
-                                dbc.Button("Manage Clients", color="secondary", id="manageClients")
-                            ),
-                            dbc.Collapse(
-                                dcc.Dropdown(
-                                    id='selectOutputs',
-                                    options=[],
-                                    value=[],
-                                    multi = True
-                                ),   
-                                id="manageCollapse"   
-                            ),
-                        ]
-                    ),
-                    width = {'size': 10, 'offset': 1}
-                )
+    selectOutputs = dbc.Col(
+                        dbc.Card(
+                            [
+                                dbc.CardHeader(
+                                    dbc.Button("Manage Clients", color="secondary", id="manageClients")
+                                ),
+                                dbc.Collapse(
+                                    dcc.Dropdown(
+                                        id='selectOutputs',
+                                        options=[],
+                                        value=[],
+                                        multi = True
+                                    ),   
+                                    id="manageCollapse"   
+                                ),
+                            ]
+                        ),
+                        width = {'size': 10, 'offset': 1}
+                    )
+    
+    results_content = html.Div([
+        dbc.Row([]),
+        dbc.Row([
+            selectSimName,
+            selectNrClients,
+            selectSimId,
+            dbc.Col(dbc.Button("Load Data", color="primary", id="loadButton", type= 'submit'), align='center')
+        ]),
+        dbc.Row([
+            selectOutputs
+        ]),
+        dbc.Row(id="tpAvgGraph"),
+        dbc.Row(id="tpGraph"),
+        dbc.Row(id="blGraph"),
+        dbc.Row(id="bulGraph"),
+        dbc.Row(id="qualLevelGraph"),
+        dbc.Row(id="segSizeGraph")
+    ])
+
+    return results_content
+
+
 
 
 newName = dbc.Col(
@@ -313,64 +337,52 @@ enableLiveInputs = dbc.Col(
                     width = 1
 )
 
-pandaClients = dbc.Col(
-                    dbc.FormGroup([
-                        dbc.Label("Clients using Panda", html_for="pandaClients"),
-                         dbc.Input( 
-                            id ='newId',
-                            value=0,
-                            type = "number", min=0, max=999, step=1
-                        )     
-                    ]),
-                    width = {'size': 1, 'offset': 1}
-                )
 
 nrServers = dbc.Col(
                     dbc.FormGroup([
-                        dbc.Label("Number of Servers:", html_for="nrServers"),
+                        dbc.Label("Servers:", html_for="nrServers"),
                          dbc.Input( 
                             id ='nrServers',
                             value=1,
                             type = "number", min=1, max=999, step=1
                         )     
                     ]),
-                    width = 1
+                    width = {'size': 1, 'offset' : 1}
                 )
 
-pandaClients = dbc.Col(
+nrClients = dbc.Col(
                     dbc.FormGroup([
-                        dbc.Label("Clients using Panda:", html_for="pandaClients"),
+                        dbc.Label("Amount:", html_for="nrClients"),
                          dbc.Input( 
-                            id ='pandaClients',
-                            value=0,
-                            type = "number", min=0, max=999, step=1
+                            id ='nrClients',
+                            value=1,
+                            type = "number", min=1, max=999, step=1
                         )     
                     ]),
-                    width = {'size': 1, 'offset': 1}
+                    width = 1, align = 'end'
                 )
 
-tobascoClients = dbc.Col(
+segmentDuration = dbc.Col(
                     dbc.FormGroup([
-                        dbc.Label("Clients using Tobasco:", html_for="tobascoClients"),
+                        dbc.Label("Segment Duration (sec):", html_for="segmentDuration"),
                          dbc.Input( 
-                            id ='tobascoClients',
-                            value=0,
-                            type = "number", min=0, max=999, step=1
+                            id ='segmentDuration',
+                            value=2,
+                            type = "number", min=1, max=60, step=1
                         )     
                     ]),
-                    width = 1
+                    width = 1.5
                 )
-
-festiveClients = dbc.Col(
+clientAlgo = dbc.Col(
                     dbc.FormGroup([
-                        dbc.Label("Clients using Festive:", html_for="festiveClients"),
-                         dbc.Input( 
-                            id ='festiveClients',
-                            value=0,
-                            type = "number", min=0, max=999, step=1
-                        )     
+                        dbc.Label("Algorithm", html_for="clientAlgo"),
+                        dbc.Select(
+                            id="clientAlgo",
+                            options= [{"label": a, "value": a} for a in abrAlgorithms ],
+                            value = "panda"
+                        )
                     ]),
-                    width = 1
+                    width = 2, align = 'end'
                 )
 
 selectTcp = dbc.Col(
@@ -382,7 +394,7 @@ selectTcp = dbc.Col(
                             value = "ns3::TcpNewReno"
                         )
                     ]),
-                    width = {'size': 2, 'offset': 1}
+                    width = 2
                 )
 
 enablePacing = dbc.Col( 
@@ -534,6 +546,33 @@ eventSchedule = dbc.Col(
     ]), id = 'eventSchedule'
 )
 
+setupClients = dbc.Card(
+    [
+        dbc.CardHeader("Client Setup"),
+        dbc.CardBody(
+            [
+                dbc.Row([
+                    nrClients,
+                    clientAlgo,
+                    videoFile,
+                    segmentDuration,
+                    dbc.Col(dbc.Button("Add clients", color="primary", id="clientButton", type= 'submit'), align='center')
+                ])
+            ]
+        ),
+        dbc.CardFooter(
+            dbc.ListGroup(
+                [
+                    dbc.ListGroupItem("Item 1"),
+                    dbc.ListGroupItem("Item 2"),
+                    dbc.ListGroupItem("Item 3"),
+                ],
+                flush=True, id="addedClients"
+            )
+        )
+    ],
+)
+
 scheduleEvent = dbc.Col(
                     dbc.Card(
                         [
@@ -542,13 +581,13 @@ scheduleEvent = dbc.Col(
                             ),
                             dbc.Collapse(
                                 html.Div([
-                                    dbc.Row([eventSchedule]),
                                     dbc.Row([
                                         scheduleEventTime,
                                         scheduleEventType,
                                         scheduleEventRateBottleneck,
                                         dbc.Col(dbc.Button("Schedule Event", color="primary", id="scheduleEventButton", type= 'submit'), align='center')
-                                    ])
+                                    ]),
+                                    dbc.Row([eventSchedule])
                                 ]),  
                                 id="scheduleCollapse"    
                             ),
@@ -559,24 +598,7 @@ scheduleEvent = dbc.Col(
 
 
 
-results_content = html.Div([
-        dbc.Row([]),
-        dbc.Row([
-            selectSimName,
-            selectNrClients,
-            selectSimId,
-            dbc.Col(dbc.Button("Load Data", color="primary", id="loadButton", type= 'submit'), align='center')
-        ]),
-        dbc.Row([
-            selectOutputs
-        ]),
-        dbc.Row(id="tpAvgGraph"),
-        dbc.Row(id="tpGraph"),
-        dbc.Row(id="blGraph"),
-        dbc.Row(id="bulGraph"),
-        dbc.Row(id="qualLevelGraph"),
-        dbc.Row(id="segSizeGraph")
-    ])
+
 
 newSim_content = html.Div([
         dbc.Row([]),
@@ -587,21 +609,21 @@ newSim_content = html.Div([
             enableLiveInputs
         ]),
         dbc.Row([
-            pandaClients,
-            tobascoClients,
-            festiveClients,
-            nrServers,
-            videoFile
-        ]),
-        dbc.Row([
             rateClients,
             delayClients,
             rateBottleneck,
             delayBottleneck
         ]),
         dbc.Row([
+            nrServers,
             selectTcp,
             enablePacing
+        ]),
+        dbc.Row([
+            dbc.Col(
+            setupClients,
+            width = {'size': 10, 'offset': 1}
+            )
         ]),
         dbc.Row([
             scheduleEvent
@@ -643,7 +665,8 @@ liveRes_content = html.Div([
               Input('tabs', 'active_tab'))
 def switch_tab(at):
     if at == 'results':
-        return results_content
+        content = refresh_simulation_results()
+        return content
     elif at == 'new':
         return newSim_content
     elif at == 'live':
@@ -655,9 +678,12 @@ def switch_tab(at):
     Input('simName', 'value')
 )
 def set_nrClients_options(selected_simulation):
-    options = [{"label": f, "value": f} for f in list(listdir(path + selected_simulation))]
-    sorted_options = sorted(options, key = lambda k: (int(k["value"])))
-    return sorted_options
+    if selected_simulation != "no simulations found":
+        options = [{"label": f, "value": f} for f in list(listdir(path + selected_simulation))]
+        sorted_options = sorted(options, key = lambda k: (int(k["value"])))
+        return sorted_options
+    else:
+        return []
 
 #set choosen clients to first available option
 @app.callback(
@@ -677,10 +703,13 @@ def set_nrClients_value(options):
     State('simName', 'value')
 )
 def set_simId_options(nrClients, selected_simulation):
-    simulations = list(dict.fromkeys([get_sim_id(s) for s in list(listdir(path + selected_simulation + "/" + nrClients))]))
-    if -1 in simulations: simulations.remove(-1)
-    options = [{"label": f, "value": f} for f in simulations]
-    return options
+    if nrClients != "no simulations found":
+        simulations = list(dict.fromkeys([get_sim_id(s) for s in list(listdir(path + selected_simulation + "/" + nrClients))]))
+        if -1 in simulations: simulations.remove(-1)
+        options = [{"label": f, "value": f} for f in simulations]
+        return options
+    else:
+        return []
 
 #choose simId first available option
 @app.callback(
@@ -737,11 +766,14 @@ def toggle_scheduleEvents(n):
     State('simName', 'value')
 )
 def loadSimData(n, simId, nrClients, simName):
-    load_data(path + simName + "/" + nrClients, simId)
-    outputs = get_outputs(path + simName + "/" + nrClients, simId)
-    options = [{"label": f, "value": f} for f in outputs]
-    options.sort()
-    return options
+    if n > 0:
+        load_data(path + simName + "/" + nrClients, simId)
+        outputs = get_outputs(path + simName + "/" + nrClients, simId)
+        options = [{"label": f, "value": f} for f in outputs]
+        options.sort()
+        return options
+    else:
+        return []
 
 #update all graphs
 @app.callback([
@@ -856,9 +888,6 @@ def update_allGraphs(clients):
     Input('newSimButton', 'n_clicks'),
     State('newName', 'value'),
     State('newId', 'value'),
-    State('pandaClients', 'value'),
-    State('tobascoClients', 'value'),
-    State('festiveClients', 'value'),
     State('nrServers', 'value'),
     State('videoFile', 'value'),
     State('selectTcp', 'value'),
@@ -867,22 +896,29 @@ def update_allGraphs(clients):
     State('rateClients', 'value'),
     State('delayClients', 'value'),
 )
-def prepare_newSim(n, name, simId, panda, tobasco, festive, servers, video, tcp, rateBottle, delayBottle, rateClients, delayClients):
+def prepare_newSim(n, name, simId, servers, video, tcp, rateBottle, delayBottle, rateClients, delayClients):
     if n > 0 and name:
+        nrClients = str(app_state["nrClients"])
         print("pressed")
         if not os.path.exists(path + name):
             mkdir(path + name)
-        if not os.path.exists(path + name + "/" + str(panda + tobasco + festive)):
-            mkdir(path + name + "/" + str(panda + tobasco + festive))
-        livePath = path + name + "/" + str(panda + tobasco + festive) + "/"
+        if not os.path.exists(path + name + "/" + nrClients):
+            mkdir(path + name + "/" + nrClients)
+        livePath = path + name + "/" + nrClients + "/"
         eventFile = open(livePath + "sim" + str(simId) + "_event_schedule.txt", "w")
         eventFile.write("Event Time Parameters\n")
         for event in app_state["eventSchedule"]:
             eventFile.write(event)
         eventFile.close()
+        clientFile = open(livePath + "sim" + str(simId) + "_clients.txt", "w")
+        for client in app_state["clients"]:
+            clientFile.write(client)
+        clientFile.close()
         realTimeEventFile = open(livePath + "sim" + str(simId) + "_real_time_events.txt", "w")
         app_state["realTimeFile"] = livePath + "sim" + str(simId) + "_real_time_events.txt"
         realTimeEventFile.close()
+        app_state["eventSchedule"] = []
+        app_state["clients"] = []
         return  [livePath, simId]
     return []
 
@@ -892,11 +928,7 @@ def prepare_newSim(n, name, simId, panda, tobasco, festive, servers, video, tcp,
     Input('live_data', 'children'),
     State('newName', 'value'),
     State('newId', 'value'),
-    State('pandaClients', 'value'),
-    State('tobascoClients', 'value'),
-    State('festiveClients', 'value'),
     State('nrServers', 'value'),
-    State('videoFile', 'value'),
     State('selectTcp', 'value'),
     State('rateBottle', 'value'),
     State('delayBottle', 'value'),
@@ -906,8 +938,10 @@ def prepare_newSim(n, name, simId, panda, tobasco, festive, servers, video, tcp,
     State('packet-pacing', 'value'),
     State('simScript', 'value')
 )
-def start_newSim(p, name, simId, panda, tobasco, festive, servers, video, tcp, rateBottle, delayBottle, rateClients, delayClients, lInputs, pacing, script):
+def start_newSim(p, name, simId, servers, tcp, rateBottle, delayBottle, rateClients, delayClients, lInputs, pacing, script):
     if p and app_state["simFinished"]:
+        nrClients = str(app_state["nrClients"])
+        app_state["nrClients"] = 0
         app_state["simFinished"] = False
         liveInputsEnabled = 1 if lInputs else 0
         packetPacingEnabled = 1 if pacing else 0 
@@ -915,13 +949,8 @@ def start_newSim(p, name, simId, panda, tobasco, festive, servers, video, tcp, r
         system("./waf --run=\"" + script +" \
             --simulationName=" + name +" \
             --simulationId=" + str(simId) +" \
-            --numberOfClients=" + str(panda + tobasco + festive) + " \
+            --numberOfClients=" + nrClients + " \
             --numberOfServers=" + str(servers) +" \
-            --segmentDuration=2000000 \
-            --pandaClients=" + str(panda) +" \
-            --tobascoClients=" + str(tobasco) +" \
-            --festiveClients=" + str(festive) +" \
-            --segmentSizeFile=DashVideos/" + video+" \
             --tcp=" + tcp + " \
             --bottleNeckRate=" + str(rateBottle) + "Kbps \
             --bottleNeckDelay=" + str(delayBottle) + "ms \
@@ -931,7 +960,6 @@ def start_newSim(p, name, simId, panda, tobasco, festive, servers, video, tcp, r
             --packetPacing=" + str(packetPacingEnabled) + "\"")
         print("sim finished")
         app_state["simFinished"] = True
-        app_state["eventSchedule"] = []
         return  'primary'
     print("no sim started")
     return 'primary'
@@ -1063,7 +1091,22 @@ def executeEvent(n, eventType, bottleneckRate):
 def scheduleEvents(n, eventType, bottleneckRate, time):
     if n > 0:
         app_state["eventSchedule"].append(eventType + " " + str(time) + " " + str(bottleneckRate) + "Kbps\n")
-    return [ dbc.Alert(e, color="secondary") for e in app_state["eventSchedule"] ]
+    return [ dbc.ListGroupItem(e) for e in app_state["eventSchedule"] ]
+
+#add clients to simulation
+@app.callback(
+    Output('addedClients', 'children'),
+    Input('clientButton', 'n_clicks'),
+    State('nrClients', 'value'),
+    State('clientAlgo', 'value'),
+    State('videoFile', 'value'),
+    State('segmentDuration', 'value')
+)
+def addClients(n, nrClients, algo, video, segDuration):
+    if n > 0:
+        app_state["clients"].append(str(nrClients) + " " + algo + " " + video + " " + str(segDuration) + " sec\n")
+        app_state["nrClients"] += nrClients
+    return [ dbc.ListGroupItem(c) for c in app_state["clients"] ]
 
 if __name__ == '__main__':
     app.run_server(debug=True)
