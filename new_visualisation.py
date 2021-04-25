@@ -26,12 +26,13 @@ path = "./dash-log-files/"
 scratchPath = "./scratch/"
 
 client_data = {}
-router_data = {}
+eventLog_data = {}
 live_client_data = {}
 app_state = { "loading" : False, "simFinished" : True, "realTimeFile" : "", "eventSchedule" : [], "clients": [], "nrClients": 0}
 extract_unit = { 
                 "bl" : {"index": "Time_Now", "value": "Buffer_Level", "resample": True, "timeUnit": 'seconds', "y_axis": "BufferLevel(seconds)" ,"title": "Buffer Level", "line_shape": 'hv' },
                 "tp" : {"index": "Time_Now", "value": "Bytes_Received", "resample": True, "timeUnit": 'seconds', "y_axis": "Kb","title": "Throughput", "line_shape": 'linear'},
+                "eff" : {"index": "Time_Now", "value": "Bytes_Received", "resample": True, "timeUnit": 'seconds', "y_axis": "Capacity used","title": "Efficiency", "line_shape": 'linear'},
                 "bul" : {"index": "Time_Now", "value": "Buffer_Underrun", "resample": True, "timeUnit": 'seconds', "y_axis": "Buffer Underrun" ,"title": "Buffer Underrun", "line_shape": 'hv'},
                 "segSize" : {"index": "Download_Request_Sent", "value": "Segment_Size", "resample": True, "timeUnit": 'seconds', "y_axis": "Size (Bit)","title": "Segment Size", "line_shape": 'hv'},
                 "qualLevel" : {"index": "Time_Now", "value": "Rep_Level", "resample": True, "timeUnit": 'seconds', "y_axis": "Quality Level","title": "Quality Level", "line_shape": 'hv'},
@@ -39,7 +40,8 @@ extract_unit = {
 aggregated_units = { "avgTp": {'unit': 'tp', 'aggregation': 'avg'},
                     "avgBl": {'unit': 'bl', 'aggregation': 'avg'},
                     "avgSegSize": {'unit': 'segSize', 'aggregation': 'avg'},
-                    "avgQualLevel": {'unit': 'qualLevel', 'aggregation': 'avg'}, }
+                    "avgQualLevel": {'unit': 'qualLevel', 'aggregation': 'avg'},
+                    "totalEff": {'unit': 'eff', 'aggregation': 'sum'} }
 congestionProtocols = [{"label": 'TcpNewReno', "value": 'ns3::TcpNewReno'}, {"label": 'TcpWestwood', "value": 'ns3::TcpWestwood'}, {"label": 'TcpVegas', "value": 'ns3::TcpVegas'}, {"label": 'TcpVeno', "value": 'ns3::TcpVeno'}, {"label": 'TcpBic', "value": 'ns3::TcpBic'}] #{"label": 'TcpCubic', "value": 'ns3::TcpCubic'}
 abrAlgorithms = ["panda", "tobasco", "festive"]
 
@@ -97,9 +99,12 @@ def load_data(path, simId):
                 client_dict["df"] = cdata
                 client_data[str(f)] = client_dict
 
+def loadEventLog(path, simId):
+    df = pd.read_csv(path + "/" + simId + "_event_log.txt" , sep = ";")
+    eventLog_data["BottleneckRate"] = df[df["Event"] == "BottleneckRate"] 
+
 def load_unit(unit):
     for c in client_data:
-        print(c)
         client_dict = client_data[c]
         if not unit in client_dict:
             df = client_dict["df"].copy()
@@ -124,8 +129,6 @@ def load_unit(unit):
 
 #update the dataframes from the currently running simulation    
 def new_load_live_data(path, simId, unit):
-    if unit == 'avgTp':
-        unit = 'tp'
     app_state["loading"] = True
     #get data for all clients
     for f in list( listdir( path )):
@@ -160,7 +163,7 @@ def new_load_live_data(path, simId, unit):
                 df = client_dict["df"][lastRead:].copy()
                 df = df[[ extract_unit[unit]["index"], extract_unit[unit]["value"] ]].dropna()
                 df[extract_unit[unit]["index"]] = pd.to_timedelta(df[extract_unit[unit]["index"]], unit = extract_unit[unit]["timeUnit"])
-                if extract_unit[unit]["resample"]:
+                if unit == 'tp':
                     df = df.resample('1S', on= extract_unit[unit]["index"]).sum()
                     if not df.empty:
                         df.index = df.index.seconds
@@ -187,10 +190,41 @@ def get_sum(dfs):
     res = reduce(lambda a, b: a.add(b, fill_value=0), dfs)
     return res
 
+#sum up all values of the first column of a dataframe
+def get_col_sum(df, col):
+    return df[col].sum()
+
+#sum up all values of the first column of a dataframe
+def get_col_avg(df, col):
+    return df[col].mean()
+
+#count the changes in the first column of a dataframe
+def count_changes(df):
+    changes = (df.diff(axis=0) != 0).sum(axis=0)
+    return changes[0] - 1 #Don't count first change in quality
+
 def get_algo(client):
     result = re.search('cl\d+_(.*)_output.txt', client)
     return result.group(1)
 
+def get_efficiency():
+    load_unit('tp')
+    for c in client_data:
+        client_dict = client_data[c]
+        if not "eff" in client_dict:
+            bottleneck_rates = eventLog_data["BottleneckRate"]
+            efficiency = client_dict["tp"].copy()
+            for i in range(len(bottleneck_rates)):
+                current_rate = bottleneck_rates.iloc[i]["Value"]
+                if i == len(bottleneck_rates) -1:
+                    eff = efficiency.loc[ efficiency.index >= bottleneck_rates.iloc[i]["Time_Now"], "Bytes_Received" ].div(current_rate)
+                    efficiency.loc[ efficiency.index >= bottleneck_rates.iloc[i]["Time_Now"], "Bytes_Received" ] = eff
+                else:
+                    eff = efficiency.loc[ (efficiency.index >= bottleneck_rates.iloc[i]["Time_Now"]) & (efficiency.index < bottleneck_rates.iloc[i + 1]["Time_Now"]), "Bytes_Received" ].div(current_rate)
+                    efficiency.loc[ (efficiency.index >= bottleneck_rates.iloc[i]["Time_Now"]) & (efficiency.index < bottleneck_rates.iloc[i + 1]["Time_Now"]), "Bytes_Received" ] = eff
+            client_dict["eff"] = efficiency
+            client_data[c] = client_dict
+    
 def refresh_simulation_results():
 
     #Components for result visualisation:
@@ -271,6 +305,162 @@ def refresh_simulation_results():
     ])
 
     return results_content
+
+def trim_client(client):
+    result = re.search('sim\d+_(.*)_output.txt', client)
+    return result.group(1)
+
+def load_qualChanges():
+    for c in client_data:
+        client_dict = client_data[c]
+        if not 'qualChanges' in client_dict:
+            client_dict['qualChanges'] = count_changes(client_dict['qualLevel'])
+
+def display_qualChanges(clients, aggregation):
+    load_unit('qualLevel')
+    load_qualChanges()
+    df = pd.DataFrame(columns=['Client', 'Quality_Changes', 'Algorithm'])
+    rows = []
+    for client in clients:
+        rows.append([trim_client(client), client_data[client]['qualChanges'], get_algo(client)])
+    df2 = pd.DataFrame(rows, columns=['Client', 'Quality_Changes', 'Algorithm'], dtype=float)
+    df = df.append(df2)
+    Fig = go.Figure()
+    if not aggregation:
+        Fig.add_bar(x=df['Client'], y=df['Quality_Changes'])
+        Fig.update_layout(xaxis_title="Client",
+            yaxis_title="Total Quality Changes",
+            title="Quality Changes",
+            template="plotly_dark",
+            plot_bgcolor='#272B30',
+            paper_bgcolor='#272B30',
+            height=700)
+    else:
+        Fig.add_box(x=df['Algorithm'], y=df['Quality_Changes'], width = 0.2)
+        Fig.update_layout(xaxis_title="Algorithm",
+            yaxis_title="Mean Quality Changes",
+            title="Quality Changes",
+            template="plotly_dark",
+            plot_bgcolor='#272B30',
+            paper_bgcolor='#272B30',
+            height=700)
+
+    Graph = dbc.Col(dcc.Graph(id="graph", figure= Fig))
+    return dbc.Row(Graph)
+
+def load_bufferUnderruns():
+    for c in client_data:
+        client_dict = client_data[c]
+        if not 'bufferUnderruns' in client_dict:
+            client_dict['bufferUnderruns'] = get_col_sum(client_dict['bul'], 'Buffer_Underrun')
+
+def display_Underruns(clients, aggregation):
+    load_unit('bul')
+    load_bufferUnderruns()
+    df = pd.DataFrame(columns=['Client', 'Underruns', 'Algorithm'])
+    rows = []
+    for client in clients:
+        rows.append([trim_client(client), client_data[client]['bufferUnderruns'], get_algo(client)])
+    df2 = pd.DataFrame(rows, columns=['Client', 'Underruns', 'Algorithm'], dtype=float)
+    df = df.append(df2)
+    Fig = go.Figure()
+    if not aggregation:
+        Fig.add_bar(x=df['Client'], y=df['Underruns'])
+        Fig.update_layout(xaxis_title="Client",
+            yaxis_title="Total Underruns (seconds)",
+            title="Buffer Underruns",
+            template="plotly_dark",
+            plot_bgcolor='#272B30',
+            paper_bgcolor='#272B30',
+            height=700)
+    else:
+        Fig.add_box(x=df['Algorithm'], y=df['Underruns'], width = 0.2)
+        Fig.update_layout(xaxis_title="Algorithm",
+            yaxis_title="Mean Total Underruns (seconds)",
+            title="Buffer Underruns",
+            template="plotly_dark",
+            plot_bgcolor='#272B30',
+            paper_bgcolor='#272B30',
+            height=700)
+
+    Graph = dbc.Col(dcc.Graph(id="graph", figure= Fig))
+    return dbc.Row(Graph)
+
+def load_avgQuality():
+    for c in client_data:
+        client_dict = client_data[c]
+        if not 'avgQuality' in client_dict:
+            client_dict['avgQuality'] = get_col_avg(client_dict['qualLevel'], 'Rep_Level')
+
+def display_AvgQualLevel(clients, aggregation):
+    load_unit('qualLevel')
+    load_avgQuality()
+    df = pd.DataFrame(columns=['Client', 'Quality', 'Algorithm'])
+    rows = []
+    for client in clients:
+        rows.append([trim_client(client), client_data[client]['avgQuality'], get_algo(client)])
+    df2 = pd.DataFrame(rows, columns=['Client', 'Quality', 'Algorithm'], dtype=float)
+    df = df.append(df2)
+    Fig = go.Figure()
+    if not aggregation:
+        Fig.add_bar(x=df['Client'], y=df['Quality'])
+        Fig.update_layout(xaxis_title="Client",
+            yaxis_title="Quality Level",
+            title="Average Quality Level",
+            template="plotly_dark",
+            plot_bgcolor='#272B30',
+            paper_bgcolor='#272B30',
+            height=700)
+    else:
+        Fig.add_box(x=df['Algorithm'], y=df['Quality'], width = 0.2)
+        Fig.update_layout(xaxis_title="Algorithm",
+            yaxis_title="Quality Level",
+            title="Average Quality Level",
+            template="plotly_dark",
+            plot_bgcolor='#272B30',
+            paper_bgcolor='#272B30',
+            height=700)
+
+    Graph = dbc.Col(dcc.Graph(id="graph", figure= Fig))
+    return dbc.Row(Graph)
+
+def load_avgEff():
+    for c in client_data:
+        client_dict = client_data[c]
+        if not 'avgEff' in client_dict:
+            client_dict['avgEff'] = get_col_avg(client_dict['eff'], 'Bytes_Received')
+
+def display_AvgEff(clients, aggregation):
+    load_unit('eff')
+    load_avgEff()
+    df = pd.DataFrame(columns=['Client', 'Efficiency', 'Algorithm'])
+    rows = []
+    for client in clients:
+        rows.append([trim_client(client), client_data[client]['avgEff'], get_algo(client)])
+    df2 = pd.DataFrame(rows, columns=['Client', 'Efficiency', 'Algorithm'], dtype=float)
+    df = df.append(df2)
+    Fig = go.Figure()
+    if not aggregation:
+        Fig.add_bar(x=df['Client'], y=df['Efficiency'])
+        Fig.update_layout(xaxis_title="Client",
+            yaxis_title="Efficiency",
+            title="Average Efficiency",
+            template="plotly_dark",
+            plot_bgcolor='#272B30',
+            paper_bgcolor='#272B30',
+            height=700)
+    else:
+        Fig.add_bar(x=df['Algorithm'], y=df['Efficiency'], width = 0.2)
+        Fig.update_layout(xaxis_title="Algorithm",
+            yaxis_title="Efficiency",
+            title="Average Efficiency",
+            template="plotly_dark",
+            plot_bgcolor='#272B30',
+            paper_bgcolor='#272B30',
+            height=700)
+
+    Graph = dbc.Col(dcc.Graph(id="graph", figure= Fig))
+    return dbc.Row(Graph)
 
 def display_graph(clients, unit, aggregation):
     Fig = go.Figure()
@@ -664,6 +854,12 @@ selectGraphs = dbc.Col(
                     {"label": "Average Segment Sizes", "value": "avgSegSize"},
                     {"label": "Quality Level", "value": "qualLevel"},
                     {"label": "Average Quality Level", "value": "avgQualLevel"},
+                    {"label": "Quality Changes", "value": "qualChanges"},
+                    {"label": "Total Buffer Underruns", "value": "bufferUnderruns"},
+                    {"label": "Average Quality", "value": "avgQuality"},
+                    {"label": "Efficiency", "value": "eff"},
+                    {"label": 'Total Efficiency', "value": "totalEff"},
+                    {"label": 'Average Efficiency', "value": "avgEff"}
                 ],
                 value=[],
                 id="selectedGraphs",
@@ -718,7 +914,6 @@ liveRes_content = html.Div([
             dbc.Tab(label='Throughput', tab_id='tp'),
             dbc.Tab(label='Segment Size', tab_id='segSize'),
             dbc.Tab(label='Video Quality', tab_id='qualLevel'),
-            dbc.Tab(label='Average Throughput', tab_id='avgTp'),
         ],
         id="liveTabs",
         active_tab="bl"
@@ -843,6 +1038,7 @@ def toggle_scheduleEvents(n):
 )
 def loadSimData(n, simId, nrClients, simName):
     if n > 0:
+        loadEventLog(path + simName + "/" + nrClients, simId)
         load_data(path + simName + "/" + nrClients, simId)
         outputs = get_outputs(path + simName + "/" + nrClients, simId)
         options = [{"label": f, "value": f} for f in outputs]
@@ -862,8 +1058,22 @@ def update_allGraphs(clients, selectedGraphs):
     if client_data:
         graphs = []
         for g in selectedGraphs:
+            if g == 'eff' or g == 'totalEff' or g == 'avgEff':
+                get_efficiency()
             g = str(g)
-            if g in aggregated_units:
+            if g == "qualChanges":
+                graphs.append( display_qualChanges(clients, False) )
+                graphs.append( display_qualChanges(clients, True) )
+            elif g == "bufferUnderruns":
+                graphs.append(display_Underruns(clients, False) )
+                graphs.append(display_Underruns(clients, True) )
+            elif g == "avgQuality":
+                graphs.append(display_AvgQualLevel(clients, False) )
+                graphs.append(display_AvgQualLevel(clients, True) )
+            elif g == "avgEff":
+                graphs.append(display_AvgEff(clients, False) )
+                graphs.append(display_AvgEff(clients, True) )
+            elif g in aggregated_units:
                 graphs.append( display_graph(clients, aggregated_units[g]['unit'], aggregated_units[g]['aggregation']) )
             else:
                 graphs.append( display_graph(clients, g, 'all') )
@@ -889,7 +1099,6 @@ def update_allGraphs(clients, selectedGraphs):
 def prepare_newSim(n, name, simId, servers, video, tcp, rateBottle, delayBottle, rateClients, delayClients):
     if n > 0 and name:
         nrClients = str(app_state["nrClients"])
-        print("pressed")
         if not os.path.exists(path + name):
             mkdir(path + name)
         if not os.path.exists(path + name + "/" + nrClients):
@@ -1002,7 +1211,7 @@ def updateLiveGraphs(n ,liveData, tab, liveTab, prevGraph):
             for client in clients:
                 if str(client) in live_client_data and 'segSize' in live_client_data[str(client)]:
                     df = live_client_data[str(client)]['segSize']
-                    Fig.add_scatter(x=df["Download_Request_Sent"], y=df["Segment_Size"], mode='lines', line_shape='hv', name=str(client))
+                    Fig.add_scatter(x=df["Time_Now"], y=df["Segment_Size"], mode='lines', line_shape='hv', name=str(client))
             Fig.update_layout(xaxis_title="seconds",
             yaxis_title="Segment Size",
             title="SegmentSize",
@@ -1026,32 +1235,6 @@ def updateLiveGraphs(n ,liveData, tab, liveTab, prevGraph):
             height=700)
             qualLevelGraph = dbc.Col(dcc.Graph(id="graph", figure= Fig))
             return qualLevelGraph, False
-        if liveTab == 'avgTp':
-            dfs = []
-            abrAlgos = {}
-            for client in clients:
-                if str(client) in live_client_data and 'tp' in live_client_data[str(client)]:
-                    algo = get_algo(client)
-                    if not algo in abrAlgos:
-                        abrAlgos[algo] = []
-                    abrAlgos[algo].append(live_client_data[str(client)]['tp'])
-                    dfs.append(live_client_data[str(client)]['tp'])
-            if dfs:
-                avgAll = get_average(dfs)
-                Fig.add_scatter(x=avgAll.index, y=avgAll["Bytes_Received"], mode='lines' , name="All Clients")
-            for key, value in abrAlgos.items():
-                if value:
-                    avg = get_average(value)
-                    Fig.add_scatter(x=avg.index, y=avg["Bytes_Received"], mode='lines' , name= key)
-            Fig.update_layout(xaxis_title="seconds",
-            yaxis_title="Kb",
-            title="Average Throughput",
-            template="plotly_dark",
-            plot_bgcolor='#272B30',
-            paper_bgcolor='#272B30',
-            height=700)
-            tpAvgGraph = dbc.Col(dcc.Graph(id="graph", figure=Fig))
-            return tpAvgGraph, False
         
         return [], False
     return [], True

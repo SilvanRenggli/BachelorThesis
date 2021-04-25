@@ -374,7 +374,7 @@ main (int argc, char *argv[])
   InstallClients((dirstr + "sim" + ToString(simulationId) + "_clients.txt"), clientNodes, serverNodes, serverifs, port, simulationId, simulationName);
 
  
-  
+  LogEvent ("BottleneckRate", std::stoi(bottleNeckRate));
   NS_LOG_INFO ("Run Simulation.");
   NS_LOG_INFO ("Sim: " << simulationId << "Clients: " << numberOfClients);
   Simulator::Run ();
