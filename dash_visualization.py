@@ -37,11 +37,20 @@ extract_unit = {
                 "segSize" : {"index": "Download_Request_Sent", "value": "Segment_Size", "resample": True, "timeUnit": 'seconds', "y_axis": "Size (Bit)","title": "Segment Size", "line_shape": 'hv'},
                 "qualLevel" : {"index": "Time_Now", "value": "Rep_Level", "resample": True, "timeUnit": 'seconds', "y_axis": "Quality Level","title": "Quality Level", "line_shape": 'hv'},
                 }
+
+live_extract_unit = { 
+                "bl" : {"index": "Time_Now", "value": "Buffer_Level", "resample": False, "timeUnit": 'nanoseconds', "y_axis": "BufferLevel(seconds)" ,"title": "Buffer Level", "line_shape": 'hv' },
+                "tp" : {"index": "Time_Now", "value": "Bytes_Received", "resample": True, "timeUnit": 'seconds', "y_axis": "Kb","title": "Throughput", "line_shape": 'linear'},
+                "eff" : {"index": "Time_Now", "value": "Bytes_Received", "resample": True, "timeUnit": 'seconds', "y_axis": "Capacity used","title": "Efficiency", "line_shape": 'linear'},
+                "bul" : {"index": "Time_Now", "value": "Buffer_Underrun", "resample": False, "timeUnit": 'nanoseconds', "y_axis": "Buffer Underrun" ,"title": "Buffer Underrun", "line_shape": 'hv'},
+                "segSize" : {"index": "Download_Request_Sent", "value": "Segment_Size", "resample": False, "timeUnit": 'nanoseconds', "y_axis": "Size (Bit)","title": "Segment Size", "line_shape": 'hv'},
+                "qualLevel" : {"index": "Time_Now", "value": "Rep_Level", "resample": False, "timeUnit": 'nanoseconds', "y_axis": "Quality Level","title": "Quality Level", "line_shape": 'hv'},
+                }
 aggregated_units = { "avgTp": {'unit': 'tp', 'aggregation': 'avg'},
                     "avgBl": {'unit': 'bl', 'aggregation': 'avg'},
                     "avgSegSize": {'unit': 'segSize', 'aggregation': 'avg'},
                     "avgQualLevel": {'unit': 'qualLevel', 'aggregation': 'avg'},
-                    "totalEff": {'unit': 'eff', 'aggregation': 'sum'} }
+                    "totalEff": {'unit': 'eff', 'aggregation': 'stacked_sum'} }
 congestionProtocols = [{"label": 'TcpNewReno', "value": 'ns3::TcpNewReno'}, {"label": 'TcpWestwood', "value": 'ns3::TcpWestwood'}, {"label": 'TcpVegas', "value": 'ns3::TcpVegas'}, {"label": 'TcpVeno', "value": 'ns3::TcpVeno'}, {"label": 'TcpBic', "value": 'ns3::TcpBic'}] #{"label": 'TcpCubic', "value": 'ns3::TcpCubic'}
 abrAlgorithms = ["panda", "tobasco", "festive"]
 
@@ -54,12 +63,31 @@ def get_sim_id(file):
     else:
         return -1
 
+#returns the nr of a client
+def get_client_nr(client):
+    match = re.search(r"^sim\d+_cl(\d+)", client)
+    if match:
+        return int(match.group(1))
+    else:
+        return -1
+
+def cmp_clients(c1, c2):
+    c1nr = get_client_nr(c1)
+    c2nr = get_client_nr(c2)
+    if c1nr > c2nr:
+        return 1
+    elif c1nr == c2nr:
+        return 0
+    else:
+        return -1 
+
 #returns all client output files that belong to this simulation
 def get_outputs(path, simId):
     outputs = []
     for f in list( listdir( path )):
         if (str(f).startswith(simId) and not str(f).find('cl') == -1 and str(f).endswith("output.txt")):
             outputs.append(str(f))
+    outputs.sort(cmp_clients)
     return outputs
 
 #returns all available scripts
@@ -89,6 +117,7 @@ app.layout = html.Div([
 
 #load all dataframes from this simulation and store them in a dictionary
 def load_data(path, simId):
+    client_data.clear()
     #get data for all clients
     for f in list( listdir( path )):
         if (str(f).startswith(simId) and not str(f).find('cl') == -1 and str(f).endswith("output.txt")):
@@ -149,25 +178,25 @@ def new_load_live_data(path, simId, unit):
             if not unit + "_lastRead" in client_dict:
                 df = client_dict["df"].copy()
                 client_dict[unit +"_lastRead"] = len(df)
-                df = df[[ extract_unit[unit]["index"], extract_unit[unit]["value"] ]].dropna()
-                df[extract_unit[unit]["index"]] = pd.to_timedelta(df[extract_unit[unit]["index"]], unit = extract_unit[unit]["timeUnit"])
-                if extract_unit[unit]["resample"]:
-                    df = df.resample('1S', on= extract_unit[unit]["index"]).sum() 
+                df = df[[ live_extract_unit[unit]["index"], live_extract_unit[unit]["value"] ]].dropna()
+                df[live_extract_unit[unit]["index"]] = pd.to_timedelta(df[live_extract_unit[unit]["index"]], unit = live_extract_unit[unit]["timeUnit"])
+                if  live_extract_unit[unit]["resample"]:
+                    df = df.resample('1S', on= live_extract_unit[unit]["index"]).sum() 
                     if not df.empty:
                         df.index = df.index.seconds
-                        df[extract_unit[unit]["value"]] = df[extract_unit[unit]["value"]] * 8 * 0.001
+                        df[live_extract_unit[unit]["value"]] = df[live_extract_unit[unit]["value"]] * 8 * 0.001
                 client_dict[unit] = df
                 
             else:
                 lastRead = client_dict[unit +"_lastRead"]
                 df = client_dict["df"][lastRead:].copy()
-                df = df[[ extract_unit[unit]["index"], extract_unit[unit]["value"] ]].dropna()
-                df[extract_unit[unit]["index"]] = pd.to_timedelta(df[extract_unit[unit]["index"]], unit = extract_unit[unit]["timeUnit"])
-                if unit == 'tp':
-                    df = df.resample('1S', on= extract_unit[unit]["index"]).sum()
+                df = df[[ live_extract_unit[unit]["index"], live_extract_unit[unit]["value"] ]].dropna()
+                df[live_extract_unit[unit]["index"]] = pd.to_timedelta(df[live_extract_unit[unit]["index"]], unit = live_extract_unit[unit]["timeUnit"])
+                if live_extract_unit[unit]["resample"]:
+                    df = df.resample('1S', on= live_extract_unit[unit]["index"]).sum()
                     if not df.empty:
                         df.index = df.index.seconds
-                        df[extract_unit[unit]["value"]] = df[extract_unit[unit]["value"]] * 8 * 0.001
+                        df[live_extract_unit[unit]["value"]] = df[live_extract_unit[unit]["value"]] * 8 * 0.001
                 new_df = client_dict[unit].append(df)
                 client_dict[unit] = new_df
                 client_dict[unit +"_lastRead"] = len(client_dict["df"].index)
@@ -338,7 +367,7 @@ def display_qualChanges(clients, aggregation):
     else:
         Fig.add_box(x=df['Algorithm'], y=df['Quality_Changes'], width = 0.2)
         Fig.update_layout(xaxis_title="Algorithm",
-            yaxis_title="Mean Quality Changes",
+            yaxis_title="Total Quality Changes",
             title="Quality Changes",
             template="plotly_dark",
             plot_bgcolor='#272B30',
@@ -478,6 +507,19 @@ def display_graph(clients, unit, aggregation):
         height=700)
         Graph = dbc.Col(dcc.Graph(id="graph", figure= Fig))
         return dbc.Row(Graph)
+    if aggregation == 'stacked':
+        for client in clients:
+            df = client_data[str(client)][unit]
+            Fig.add_scatter(x=df.index, y=df[extract_unit[unit]["value"]], mode='lines', line_shape=extract_unit[unit]["line_shape"], name=str(client), stackgroup='one')
+        Fig.update_layout(xaxis_title="seconds",
+        yaxis_title=extract_unit[unit]["y_axis"],
+        title=extract_unit[unit]["title"],
+        template="plotly_dark",
+        plot_bgcolor='#272B30',
+        paper_bgcolor='#272B30',
+        height=700)
+        Graph = dbc.Col(dcc.Graph(id="graph", figure= Fig))
+        return dbc.Row(Graph)
     if aggregation == 'avg':
         dfs = []
         abrAlgos = {}
@@ -515,6 +557,28 @@ def display_graph(clients, unit, aggregation):
         for key, value in abrAlgos.items():
             avg = get_sum(value)
             Fig.add_scatter(x=avg.index, y=avg[extract_unit[unit]["value"]], mode='lines' , name= key)
+        Fig.update_layout(xaxis_title="seconds",
+        yaxis_title=extract_unit[unit]["y_axis"],
+        title= "Average " + extract_unit[unit]["title"],
+        template="plotly_dark",
+        plot_bgcolor='#272B30',
+        paper_bgcolor='#272B30',
+        height=700)
+        Graph = dbc.Col(dcc.Graph(id="graph", figure=Fig))
+        return dbc.Row(Graph)
+    if aggregation == 'stacked_sum':
+        dfs = []
+        abrAlgos = {}
+        for client in clients:
+            algo = get_algo(client)
+            if not algo in abrAlgos:
+                abrAlgos[algo] = []
+            abrAlgos[algo].append(client_data[str(client)][unit])
+            dfs.append(client_data[str(client)][unit])
+        avgAll = get_sum(dfs)
+        for key, value in abrAlgos.items():
+            avg = get_sum(value)
+            Fig.add_scatter(x=avg.index, y=avg[extract_unit[unit]["value"]], mode='lines' , name= key, stackgroup='one')
         Fig.update_layout(xaxis_title="seconds",
         yaxis_title=extract_unit[unit]["y_axis"],
         title= "Average " + extract_unit[unit]["title"],
@@ -686,7 +750,7 @@ rateBottleneck = dbc.Col(
                          dbc.Input( 
                             id ='rateBottle',
                             value=5000,
-                            type = "number", min=100, max=100000, step=1
+                            type = "number", min=1000, max=300000, step=1
                         )     
                     ]),
                     width = 1
@@ -849,6 +913,8 @@ selectGraphs = dbc.Col(
                     {"label": "Average Throughput", "value": "avgTp"},
                     {"label": "Buffer Level", "value": "bl"},
                     {"label": "Average Buffer Level", "value": "avgBl"},
+                    {"label": "Efficiency", "value": "eff"},
+                    {"label": 'Total Efficiency', "value": "totalEff"},
                     {"label": "Buffer Underrun", "value": "bul"},
                     {"label": "Segment Sizes", "value": "segSize"},
                     {"label": "Average Segment Sizes", "value": "avgSegSize"},
@@ -856,9 +922,7 @@ selectGraphs = dbc.Col(
                     {"label": "Average Quality Level", "value": "avgQualLevel"},
                     {"label": "Quality Changes", "value": "qualChanges"},
                     {"label": "Total Buffer Underruns", "value": "bufferUnderruns"},
-                    {"label": "Average Quality", "value": "avgQuality"},
-                    {"label": "Efficiency", "value": "eff"},
-                    {"label": 'Total Efficiency', "value": "totalEff"},
+                    {"label": "Average Playback Quality", "value": "avgQuality"},
                     {"label": 'Average Efficiency', "value": "avgEff"}
                 ],
                 value=[],
@@ -1001,7 +1065,6 @@ def set_simId_value(options):
 def set_selectClients_value(options):
     if len(options) > 0:
         options = [ o["value"] for o in options ]
-        options.sort()
         return options
     else:
         return "no output found"
@@ -1042,7 +1105,6 @@ def loadSimData(n, simId, nrClients, simName):
         load_data(path + simName + "/" + nrClients, simId)
         outputs = get_outputs(path + simName + "/" + nrClients, simId)
         options = [{"label": f, "value": f} for f in outputs]
-        options.sort()
         return options
     else:
         return []
@@ -1064,6 +1126,8 @@ def update_allGraphs(clients, selectedGraphs):
             if g == "qualChanges":
                 graphs.append( display_qualChanges(clients, False) )
                 graphs.append( display_qualChanges(clients, True) )
+            elif g == 'eff':
+                graphs.append( display_graph(clients, g, 'stacked') )
             elif g == "bufferUnderruns":
                 graphs.append(display_Underruns(clients, False) )
                 graphs.append(display_Underruns(clients, True) )
@@ -1142,6 +1206,7 @@ def start_newSim(p, name, simId, servers, tcp, rateBottle, delayBottle, rateClie
         nrClients = str(app_state["nrClients"])
         app_state["nrClients"] = 0
         app_state["simFinished"] = False
+        live_client_data = {}
         liveInputsEnabled = 1 if lInputs else 0
         packetPacingEnabled = 1 if pacing else 0 
         print("starting simulation")
@@ -1211,7 +1276,7 @@ def updateLiveGraphs(n ,liveData, tab, liveTab, prevGraph):
             for client in clients:
                 if str(client) in live_client_data and 'segSize' in live_client_data[str(client)]:
                     df = live_client_data[str(client)]['segSize']
-                    Fig.add_scatter(x=df["Time_Now"], y=df["Segment_Size"], mode='lines', line_shape='hv', name=str(client))
+                    Fig.add_scatter(x=df["Download_Request_Sent"], y=df["Segment_Size"], mode='lines', line_shape='hv', name=str(client))
             Fig.update_layout(xaxis_title="seconds",
             yaxis_title="Segment Size",
             title="SegmentSize",

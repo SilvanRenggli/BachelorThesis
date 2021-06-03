@@ -1,0 +1,21 @@
+## -*- Mode: python; py-indent-offset: 4; indent-tabs-mode: nil; coding: utf-8; -*-
+
+def build(bld):
+    module = bld.create_ns3_module('dash_visualization', ['internet','config-store','stats'])
+    module.includes = '.'
+    module.source = [
+        'model/dash-application-installer.cc',
+        'model/dash-event-scheduler.cc',
+        ]
+
+    headers = bld(features='ns3header')
+    headers.module = 'dash_visualization'
+    headers.source = [
+        'model/dash-application-installer.h',
+        'model/dash-event-scheduler.h',
+        ]
+
+##    if bld.env['ENABLE_EXAMPLES']:
+##        bld.recurse('examples')
+
+    bld.ns3_python_bindings()

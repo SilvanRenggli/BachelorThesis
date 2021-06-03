@@ -32,6 +32,8 @@
 #include "ns3/flow-monitor-module.h"
 #include "ns3/tcp-stream-helper.h"
 #include "ns3/tcp-stream-interface.h"
+#include "ns3/dash-application-installer.h"
+#include "ns3/dash-event-scheduler.h"
 
 template <typename T>
 std::string ToString(T val)
@@ -63,135 +65,6 @@ std::ofstream dataLog;
 std::ofstream eventLog; 
 
 
-void
-LogPacket (Ptr<const Packet> p)
-{
-  dataLog << Simulator::Now ().GetMicroSeconds () / (double) 1000000 << ";" << p->GetSize () << ";\n";
-  dataLog.flush ();
-}
-
-void
-LogEvent (const char *event ,uint64_t value)
-{
-  eventLog << Simulator::Now ().GetMicroSeconds () / (double) 1000000 << ";" << event << ";" << value << "\n";
-  eventLog.flush ();
-}
-
-void
-changeBottleneckRate (const std::string& value)
-{
-  Config::Set("/NodeList/0/DeviceList/0/$ns3::PointToPointNetDevice/DataRate", StringValue(value) );
-  Config::Set("/NodeList/1/DeviceList/0/$ns3::PointToPointNetDevice/DataRate", StringValue(value) );
-  LogEvent ("BottleneckRate", std::stoi(value));
-}
-
-
-void
-InstallClients (const std::string& clientFilePath, ns3::NodeContainer clientNodes, ns3::NodeContainer serverNodes, ns3::Ipv4InterfaceContainer serverifs, uint16_t port, uint32_t simulationId, const std::string& simulationName){
-  std::cerr << "called " << simulationName << std::to_string(simulationId) <<"\n";
-  std::ifstream cfile(clientFilePath);
-  std::string line;
-  uint64_t clientCount = 0;
-  uint64_t clientsPerServer = clientNodes.GetN () / serverNodes.GetN ();
-  while (std::getline(cfile, line))
-  {
-    uint64_t server = clientCount / clientsPerServer;
-    // read next client batch from file
-    std::istringstream iss(line);
-    uint amount;
-    std::string algo;
-    std::string video;
-    uint segDuration;
-    if (!(iss >> amount >> algo >> video >> segDuration)) {
-      std::cerr << "invalid client file!" << "\n";
-    }
-    video = "./DashVideos/" + video;
-    segDuration = segDuration * 1000000;
-    std::cerr << std::to_string(amount) << " " << algo << " " << video << " " << std::to_string(segDuration) << "\n";
-    //install all clients from this batch
-    std::vector <std::pair <Ptr<Node>, std::string> > clients;
-    uint offset = clientCount;
-
-    TcpStreamClientHelper clientHelper (serverifs.GetAddress (server), port);
-    clientHelper.SetAttribute ("SegmentDuration", UintegerValue (segDuration));
-    clientHelper.SetAttribute ("SegmentSizeFilePath", StringValue (video));
-    clientHelper.SetAttribute ("NumberOfClients", UintegerValue(clientNodes.GetN ()));
-    clientHelper.SetAttribute ("SimulationId", UintegerValue (simulationId));
-    clientHelper.SetAttribute ("SimulationName", StringValue (simulationName));
-    for (uint i = 0; i < amount; i ++){
-      std::pair <Ptr<Node>, std::string> client (clientNodes.Get (clientCount), algo);
-      clients.push_back (client);
-      clientCount ++;
-      if (clientCount / clientsPerServer > server){
-        clientHelper.SetAttribute ("RemoteAddress", AddressValue (serverifs.GetAddress (server)));
-      }
-    }
-
-    ApplicationContainer clientApp = clientHelper.Install (clients, offset);
-    clientApp.Start (Seconds (2.0));
-  }
-  cfile.close();
-}
-
-void
-ScheduleEvents (const char* eventFilePath)
-{
-  std::cerr << "called " << eventFilePath <<"\n";
-  std::ifstream efile(eventFilePath);
-  std::string line;
-  std::getline(efile, line);
-  while (std::getline(efile, line))
-  {
-    std::istringstream iss(line);
-    std::string event;
-    int time;
-    std::string value;
-    if (!(iss >> event >> time >> value)) {
-      std::cerr << "invalid event schedule file!" << "\n";
-    }
-    if (event == "BottleneckRate"){
-      //Simulator::Schedule(Seconds(time), &changeBottleneckRate, (value + "Mbps").c_str());
-      Simulator::Schedule(Seconds(time), &changeBottleneckRate, value);
-    }
-    std::cerr << event << " " << std::to_string(time) << " " << value << "\n";
-  }
-  efile.close();
-}
-
-void
-CheckLiveEvents (const std::string& liveEventFilePath)
-{
-  std::cerr << "called " << liveEventFilePath <<"\n";
-  std::ifstream efile(liveEventFilePath);
-  std::string line;
-  uint64_t line_count = 0;
-  while (std::getline(efile, line))
-  { 
-    line_count ++;
-    if(line_count > live_event_index){
-      std::istringstream iss(line);
-      std::cerr << line <<"\n";
-      std::string event;
-      std::string value;
-      if (!(iss >> event >> value)) {
-        //std::cerr << "invalid event schedule file!" << "\n";
-        line_count --;
-        break;
-      }
-      if (event == "BottleneckRate"){
-        std::cerr << event << " " << Simulator::Now ().GetMicroSeconds () / (double) 1000000 << " " << value << "\n";
-        Simulator::Schedule(Seconds (0.001), &changeBottleneckRate, value);
-      }
-      if (event == "EndSimulation"){
-        Simulator::Stop ();
-      }
-    }
-  }
-  live_event_index = line_count;
-  Simulator::Schedule (Seconds (1), &CheckLiveEvents, liveEventFilePath);
-  efile.close();
-}
-
 int
 main (int argc, char *argv[])
 {
@@ -201,7 +74,7 @@ main (int argc, char *argv[])
   LogComponentEnable ("TcpStreamServerApplication", LOG_LEVEL_INFO);
 
 
-    CommandLine cmd;
+  CommandLine cmd;
   cmd.Usage ("Simulation of streaming with DASH.\n");
   cmd.AddValue ("simulationName", "The simulation's name (for logging purposes)", simulationName);
   cmd.AddValue ("simulationId", "The simulation's index (for logging purposes)", simulationId);
@@ -219,7 +92,9 @@ main (int argc, char *argv[])
   live_event_index = 0;
   DataRate maxPacingRate (channelRate);
 
-  Config::SetDefault ("ns3::TcpL4Protocol::SocketType", StringValue (tcpModel));
+  TypeId tcpTid;
+  NS_ABORT_MSG_UNLESS (TypeId::LookupByNameFailSafe (tcpModel, &tcpTid), "TypeId " << tcpModel << " not found");
+  Config::SetDefault ("ns3::TcpL4Protocol::SocketType", TypeIdValue (TypeId::LookupByName (tcpModel)));
   Config::SetDefault("ns3::TcpSocket::SegmentSize", UintegerValue (1446));
   Config::SetDefault("ns3::TcpSocket::SndBufSize", UintegerValue (524288));
   Config::SetDefault("ns3::TcpSocket::RcvBufSize", UintegerValue (524288));
@@ -285,9 +160,6 @@ main (int argc, char *argv[])
   stack.Install(clientNodes);
   stack.Install(serverNodes);
 
-  // install packet sniffer for logging on router
-  routerdevices.Get (0)->TraceConnectWithoutContext ("Sniffer", MakeCallback(&LogPacket));
-
   //Assign ipv4Addresses
   ns3::Ipv4AddressHelper routerips =
         ns3::Ipv4AddressHelper("10.32.0.0", "255.255.255.0");
@@ -341,46 +213,31 @@ main (int argc, char *argv[])
   const char * dir = dirstr.c_str();
   mkdir(dir, 0775);
 
-  // create logfile for router throughput
   
-  std::string Log = dashLogDirectory + simulationName + "/" + ToString(numberOfClients)  + "/sim" + ToString(simulationId) + "_" + "router_output.txt";
-  dataLog.open (Log.c_str ());
-  dataLog << "Time_Now;Throughput;\n";
-  dataLog.flush ();
-
+ // create logfile for event logging
+  std::string Log = dashLogDirectory + simulationName + "/" + ToString(numberOfClients)  + "/sim" + ToString(simulationId) + "_" + "event_log.txt";
+  std::string liveEventFilePath = dirstr + "sim" + ToString(simulationId) + "_real_time_events.txt";
   // load scheduled events
-  ScheduleEvents((dirstr + "sim" + ToString(simulationId) + "_event_schedule.txt").c_str());
+  DashEventScheduler scheduler (Log, liveEventFilePath, liveInputs);
+  scheduler.ScheduleEvents((dirstr + "sim" + ToString(simulationId) + "_event_schedule.txt").c_str());
 
-  if (liveInputs != 0){
-    CheckLiveEvents((dirstr + "sim" + ToString(simulationId) + "_real_time_events.txt"));
-  }
-
-  // create logfile for event logging
   
-  Log = dashLogDirectory + simulationName + "/" + ToString(numberOfClients)  + "/sim" + ToString(simulationId) + "_" + "event_log.txt";
-  eventLog.open (Log.c_str ());
-  eventLog << "Time_Now;Event;Value\n";
-  eventLog.flush ();
-  
-  
-  //Install server applications
-  for (uint i = 0; i < serverNodes.GetN (); i++)
-    {
-      TcpStreamServerHelper serverHelper (port);
-      ApplicationContainer serverApps = serverHelper.Install (serverNodes.Get (i));
-      serverApps.Start (Seconds (1.0));
-    }
 
-  InstallClients((dirstr + "sim" + ToString(simulationId) + "_clients.txt"), clientNodes, serverNodes, serverifs, port, simulationId, simulationName);
-
+  // eventLog.open (Log.c_str ());
+  // eventLog << "Time_Now;Event;Value\n";
+  // eventLog.flush ();
+  
+  DashApplicationInstaller installer ((dirstr + "sim" + ToString(simulationId) + "_clients.txt"), port, simulationId, simulationName);
+  installer.InstallClients (clientNodes, serverNodes, serverifs);
+  installer.InstallServers (serverNodes);
  
-  LogEvent ("BottleneckRate", std::stoi(bottleNeckRate));
+  scheduler.LogEvent ("BottleneckRate", std::stoi(bottleNeckRate));
   NS_LOG_INFO ("Run Simulation.");
   NS_LOG_INFO ("Sim: " << simulationId << "Clients: " << numberOfClients);
   Simulator::Run ();
   Simulator::Destroy ();
   dataLog.close();
-  eventLog.close();
+  scheduler.CleanUp();
   NS_LOG_INFO ("Done.");
   return 0;
 }

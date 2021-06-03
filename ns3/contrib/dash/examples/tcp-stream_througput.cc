@@ -149,7 +149,7 @@ main (int argc, char *argv[])
 
   /* Set up WAN link between server node and access point*/
   PointToPointHelper p2p;
-  p2p.SetDeviceAttribute ("DataRate", StringValue ("450000kb/s")); // This must not be more than the maximum throughput in 802.11n
+  p2p.SetDeviceAttribute ("DataRate", StringValue ("100000kb/s")); // This must not be more than the maximum throughput in 802.11n
   p2p.SetDeviceAttribute ("Mtu", UintegerValue (1500));
   p2p.SetChannelAttribute ("Delay", StringValue ("45ms"));
   NetDeviceContainer wanIpDevices;
@@ -192,7 +192,7 @@ main (int argc, char *argv[])
   Address serverAddress = Address(wanInterface.GetAddress (0));
 
   /* IPs for WLAN (STAs and AP) */
-  address.SetBase ("192.168.2.0", "255.255.254.0");
+  address.SetBase ("192.168.1.0", "255.255.255.0");
   address.Assign (wlanDevices);
 
   /* Populate routing table */
@@ -272,8 +272,8 @@ main (int argc, char *argv[])
 
   // if logging of the packets between AP---Server or AP and the STAs is wanted, these two lines can be activated
 
-  // p2p.EnablePcapAll ("p2p-", true);
-  // wifiPhy.EnablePcapAll ("wifi-", true);
+  p2p.EnablePcapAll ("p2p-", true);
+  wifiPhy.EnablePcapAll ("wifi-", true);
 
 
 
@@ -290,17 +290,17 @@ main (int argc, char *argv[])
   ApplicationContainer clientApps = clientHelper.Install (clients);
   for (uint i = 0; i < clientApps.GetN (); i++)
     {
-      double startTime = 2.0 / 100.0; //TODO start all clients at once or with delay?
+      double startTime = 2.0 + ((i * 3) / 100.0);
       clientApps.Get (i)->SetStartTime (Seconds (startTime));
     }
 
   //tracing
-  // PacketSinkHelper sinkHelper ("ns3::TcpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 9));
-  // ApplicationContainer sinkApp = sinkHelper.Install (apNode);
-  // sink = StaticCast<PacketSink> (sinkApp.Get (0));
+  PacketSinkHelper sinkHelper ("ns3::TcpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 9));
+  ApplicationContainer sinkApp = sinkHelper.Install (apNode);
+  sink = StaticCast<PacketSink> (sinkApp.Get (0));
 
-  // sinkApp.Start (Seconds (0.0));
-  // Simulator::Schedule (Seconds (1.1), &CalculateThroughput);
+  sinkApp.Start (Seconds (0.0));
+  Simulator::Schedule (Seconds (1.1), &CalculateThroughput);
   //end tracing
 
   NS_LOG_INFO ("Run Simulation.");
